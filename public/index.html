@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频剪辑工具</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 顶部标题栏 -->
+        <header class="header">
+            <div class="header-left">
+                <span class="logo">🎬</span>
+                <h1>视频剪辑工具</h1>
+            </div>
+            <div class="header-right">
+                <button id="btnSettings" class="btn-icon" title="设置">⚙️</button>
+                <button id="btnOpenOutput" class="btn-icon" title="打开输出文件夹">📁</button>
+            </div>
+        </header>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 左侧：文件浏览器 -->
+            <aside class="file-browser">
+                <div class="panel-header">
+                    <h2>📂 文件浏览</h2>
+                    <button id="btnRefresh" class="btn-small" title="刷新">🔄</button>
+                </div>
+                
+                <div class="path-bar">
+                    <button id="btnBack" class="btn-small" title="返回上级目录">↑ 上级</button>
+                    <input type="text" id="currentPath" placeholder="路径..." />
+                    <button id="btnGo" class="btn-small" title="前往">GO</button>
+                    <button id="btnBatchConvert" class="btn-small btn-convert" title="批量转封装">⚡ 转封装</button>
+                </div>
+                
+                <div class="file-list" id="fileList">
+                    <!-- 文件列表将由JS填充 -->
+                    <div class="loading">加载中...</div>
+                </div>
+            </aside>
+
+            <!-- 右侧：剪辑控制 -->
+            <section class="clip-editor">
+                <!-- 视频预览区域 -->
+                <div class="video-preview-panel" id="videoPreviewPanel">
+                    <!-- 视频信息栏 -->
+                    <div class="video-header" id="videoHeader" style="display: none;">
+                        <div class="video-info">
+                            <span class="video-icon">🎬</span>
+                            <span class="video-name" id="videoName">未选择视频</span>
+                        </div>
+                        <button class="btn-close-video" id="btnCloseVideo" title="关闭视频">✕</button>
+                    </div>
+                    
+                    <div class="no-video" id="noVideoHint">
+                        <span class="icon">🎥</span>
+                        <p>请从左侧选择视频文件</p>
+                    </div>
+                    <div class="video-container" id="videoContainer" style="display: none;">
+                        <video id="videoPlayer" controls>
+                            您的浏览器不支持视频播放
+                        </video>
+                        <div class="video-error" id="videoError" style="display: none;">
+                            <span class="icon">⚠️</span>
+                            <p>该视频格式浏览器不支持预览</p>
+                            <p class="hint">但不影响剪辑功能，您可以手动输入时间</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 时间轴控制 -->
+                <div class="timeline-panel" id="timelinePanel" style="display: none;">
+                    <h3>⏱️ 剪辑范围</h3>
+                    
+                    <!-- 时间轴 -->
+                    <div class="timeline-container">
+                        <div class="timeline" id="timeline">
+                            <div class="timeline-track"></div>
+                            <div class="timeline-progress" id="timelineProgress"></div>
+                            <div class="timeline-selection" id="timelineSelection"></div>
+                            <div class="timeline-handle start" id="handleStart" title="拖动设置开始时间"></div>
+                            <div class="timeline-handle end" id="handleEnd" title="拖动设置结束时间"></div>
+                            <div class="timeline-playhead" id="playhead" title="当前播放位置"></div>
+                        </div>
+                        <div class="timeline-labels">
+                            <span id="labelStart">00:00:00</span>
+                            <span id="labelCurrent">当前: 00:00:00</span>
+                            <span id="labelEnd">00:00:00</span>
+                        </div>
+                    </div>
+
+                    <!-- 时间输入 -->
+                    <div class="time-inputs">
+                        <div class="time-input-group">
+                            <label>开始时间</label>
+                            <div class="time-input-wrapper">
+                                <input type="text" id="inputStartTime" value="00:00:00" pattern="\d{2}:\d{2}:\d{2}" />
+                                <button class="btn-small btn-use-current" id="btnUseCurrentStart" title="使用当前播放位置">📍</button>
+                            </div>
+                        </div>
+                        <div class="time-input-group">
+                            <label>结束时间</label>
+                            <div class="time-input-wrapper">
+                                <input type="text" id="inputEndTime" value="00:00:00" pattern="\d{2}:\d{2}:\d{2}" />
+                                <button class="btn-small btn-use-current" id="btnUseCurrentEnd" title="使用当前播放位置">📍</button>
+                            </div>
+                        </div>
+                        <div class="time-input-group">
+                            <label>片段时长</label>
+                            <span class="clip-duration" id="clipDuration">00:00:00</span>
+                        </div>
+                    </div>
+
+                    <!-- 快捷操作 -->
+                    <div class="quick-actions">
+                        <button class="btn-small" id="btnPreviewStart" title="跳转到开始位置">▶ 预览开始点</button>
+                        <button class="btn-small" id="btnPreviewEnd" title="跳转到结束位置">▶ 预览结束点</button>
+                        <button class="btn-small" id="btnPreviewClip" title="预览剪辑片段">▶ 预览片段</button>
+                    </div>
+
+                    <!-- 输出设置 -->
+                    <div class="output-settings">
+                        <div class="output-name">
+                            <label>输出文件名（可选）</label>
+                            <input type="text" id="outputName" placeholder="留空则自动生成" />
+                        </div>
+                        <div class="output-options">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="reEncode" />
+                                <span>重新编码（更兼容但较慢）</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- 操作按钮 -->
+                    <div class="action-buttons">
+                        <button id="btnClip" class="btn-primary btn-large">
+                            ✂️ 开始剪辑
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 剪辑进度/结果 -->
+                <div class="result-panel" id="resultPanel" style="display: none;">
+                    <div class="result-content"></div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 设置弹窗 -->
+        <div class="modal" id="settingsModal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>⚙️ 设置</h2>
+                    <button class="modal-close" id="btnCloseSettings">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>FFmpeg 路径</label>
+                        <div class="input-with-browse">
+                            <input type="text" id="settingFfmpegPath" placeholder="点击浏览选择 ffmpeg.exe" readonly />
+                            <button class="btn-browse" id="btnBrowseFfmpeg">浏览...</button>
+                        </div>
+                        <p class="hint">建议使用 ffmpeg 5.1 或 4.4 版本以获得最佳兼容性</p>
+                    </div>
+                    <div class="form-group">
+                        <label>输出目录</label>
+                        <div class="input-with-browse">
+                            <input type="text" id="settingOutputDir" placeholder="点击浏览选择输出目录" readonly />
+                            <button class="btn-browse" id="btnBrowseOutput">浏览...</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <button id="btnTestFfmpeg" class="btn-secondary">测试 FFmpeg</button>
+                        <span id="ffmpegTestResult"></span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btnSaveSettings" class="btn-primary">保存设置</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 文件/目录选择弹窗 -->
+        <div class="modal" id="fileBrowserModal" style="display: none;">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h2 id="fileBrowserTitle">📂 选择文件</h2>
+                    <button class="modal-close" id="btnCloseFileBrowser">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="path-bar modal-path-bar">
+                        <button id="btnModalBack" class="btn-small" title="返回上级目录">↑ 上级</button>
+                        <input type="text" id="modalCurrentPath" placeholder="当前路径" readonly />
+                    </div>
+                    <div class="file-list modal-file-list" id="modalFileList">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <span id="modalSelectedPath" class="selected-path"></span>
+                    <button id="btnCancelFileBrowser" class="btn-secondary">取消</button>
+                    <button id="btnConfirmFileBrowser" class="btn-primary">确定</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 文件已存在确认弹窗 -->
+        <div class="modal" id="fileExistsModal" style="display: none;">
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h2>⚠️ 文件已存在</h2>
+                    <button class="modal-close" id="btnCloseFileExists">✕</button>
+                </div>
+                <div class="modal-body">
+                    <p class="file-exists-message">输出文件已存在：</p>
+                    <p class="file-exists-path" id="existingFilePath"></p>
+                    <p class="file-exists-hint">请选择操作：</p>
+                </div>
+                <div class="modal-footer file-exists-actions">
+                    <button id="btnFileExistsCancel" class="btn-secondary">取消剪辑</button>
+                    <button id="btnFileExistsRename" class="btn-secondary">自动重命名</button>
+                    <button id="btnFileExistsOverwrite" class="btn-primary btn-danger">覆盖文件</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
