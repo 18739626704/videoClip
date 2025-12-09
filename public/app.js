@@ -553,9 +553,11 @@ function updateTimeline() {
     DOM.handleStart.style.left = `${startPercent}%`;
     DOM.handleEnd.style.left = `${endPercent}%`;
     
-    // 更新选区
-    DOM.timelineSelection.style.left = `${startPercent}%`;
-    DOM.timelineSelection.style.right = `${100 - endPercent}%`;
+    // 更新选区（即使开始时间大于结束时间也显示）
+    const leftPercent = Math.min(startPercent, endPercent);
+    const rightPercent = Math.max(startPercent, endPercent);
+    DOM.timelineSelection.style.left = `${leftPercent}%`;
+    DOM.timelineSelection.style.right = `${100 - rightPercent}%`;
     
     // 更新标签
     DOM.labelStart.textContent = formatTime(state.startTime);
@@ -565,8 +567,15 @@ function updateTimeline() {
     DOM.inputStartTime.value = formatTime(state.startTime);
     DOM.inputEndTime.value = formatTime(state.endTime);
     
-    // 更新片段时长
-    DOM.clipDuration.textContent = formatTime(state.endTime - state.startTime);
+    // 更新片段时长（如果开始时间大于结束时间，显示警告样式）
+    const duration = state.endTime - state.startTime;
+    if (duration < 0) {
+        DOM.clipDuration.textContent = `${formatTime(Math.abs(duration))} ⚠️`;
+        DOM.clipDuration.style.color = 'var(--error)';
+    } else {
+        DOM.clipDuration.textContent = formatTime(duration);
+        DOM.clipDuration.style.color = 'var(--primary)';
+    }
 }
 
 /**
@@ -639,6 +648,22 @@ function initTimelineDrag() {
 async function doClip(overwrite = false, customOutputName = null) {
     if (!state.activeVideo) {
         showResult('请先选择视频', 'error');
+        return;
+    }
+    
+    // 校验时间范围
+    if (state.startTime >= state.endTime) {
+        showResult('❌ 开始时间必须小于结束时间', 'error');
+        return;
+    }
+    
+    if (state.startTime < 0) {
+        showResult('❌ 开始时间不能为负数', 'error');
+        return;
+    }
+    
+    if (state.endTime > state.duration) {
+        showResult('❌ 结束时间不能超过视频总时长', 'error');
         return;
     }
     
@@ -964,13 +989,14 @@ function bindEvents() {
     // 视频播放事件
     DOM.videoPlayer.addEventListener('timeupdate', onVideoTimeUpdate);
     
-    // 空格键控制播放/暂停
+    // 全局键盘控制：空格播放/暂停，左右键快进/后退
     document.addEventListener('keydown', (e) => {
-        // 如果焦点在输入框中，不响应空格
+        // 如果焦点在输入框中，不响应这些快捷键
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
             return;
         }
         
+        // 空格键：播放/暂停
         if (e.code === 'Space' && state.videoSupported) {
             e.preventDefault();
             if (DOM.videoPlayer.paused) {
@@ -979,13 +1005,25 @@ function bindEvents() {
                 DOM.videoPlayer.pause();
             }
         }
+        
+        // 左箭头：后退10秒
+        if (e.code === 'ArrowLeft' && state.videoSupported) {
+            e.preventDefault();
+            DOM.videoPlayer.currentTime = Math.max(0, DOM.videoPlayer.currentTime - 10);
+        }
+        
+        // 右箭头：前进10秒
+        if (e.code === 'ArrowRight' && state.videoSupported) {
+            e.preventDefault();
+            DOM.videoPlayer.currentTime = Math.min(state.duration, DOM.videoPlayer.currentTime + 10);
+        }
     });
     
-    // 时间输入 - 直接响应回车和失焦
+    // 时间输入 - 允许自由输入，不做实时校验（只在剪辑时校验）
     DOM.inputStartTime.addEventListener('change', () => {
         const time = parseTime(DOM.inputStartTime.value);
-        if (time !== null && time >= 0 && time < state.endTime) {
-            state.startTime = time;
+        if (time !== null && time >= 0) {
+            state.startTime = Math.min(time, state.duration);
             updateTimeline();
         } else {
             DOM.inputStartTime.value = formatTime(state.startTime);
@@ -994,8 +1032,8 @@ function bindEvents() {
     
     DOM.inputEndTime.addEventListener('change', () => {
         const time = parseTime(DOM.inputEndTime.value);
-        if (time !== null && time > state.startTime && time <= state.duration) {
-            state.endTime = time;
+        if (time !== null && time >= 0) {
+            state.endTime = Math.min(time, state.duration);
             updateTimeline();
         } else {
             DOM.inputEndTime.value = formatTime(state.endTime);

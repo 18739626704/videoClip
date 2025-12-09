@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const { exec, spawn } = require('child_process');
 const os = require('os');
+const logger = require('./logger');
 
 const app = express();
 const PORT = 3000;
@@ -28,7 +29,7 @@ function getConfig() {
             return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
         }
     } catch (e) {
-        console.error('读取配置失败:', e.message);
+        logger.error('[配置]', `读取配置失败: ${e.message}`);
     }
     // 默认配置
     return {
@@ -228,7 +229,7 @@ setInterval(() => {
     const now = Date.now();
     for (const [sessionId, info] of transcodedFiles) {
         if (now - info.createTime > TEMP_FILE_TIMEOUT) {
-            console.log(`[转码] 清理超时临时文件: ${sessionId}`);
+            logger.info('[转码]', `清理超时临时文件: ${sessionId}`);
             cleanupTempFile(sessionId);
         }
     }
@@ -243,10 +244,10 @@ function cleanupTempFile(sessionId) {
         try {
             if (fs.existsSync(info.tempPath)) {
                 fs.unlinkSync(info.tempPath);
-                console.log(`[转码] 已删除临时文件: ${info.tempPath}`);
+                logger.info('[转码]', `已删除临时文件: ${info.tempPath}`);
             }
         } catch (e) {
-            console.error(`[转码] 删除临时文件失败: ${e.message}`);
+            logger.error('[转码]', `删除临时文件失败: ${e.message}`);
         }
         transcodedFiles.delete(sessionId);
     }
@@ -270,7 +271,7 @@ function stopTranscodeProcess(sessionId) {
             } catch (e) {}
         }
         activeTranscodes.delete(sessionId);
-        console.log(`[转码] 进程已停止: ${sessionId}`);
+        logger.info('[转码]', `进程已停止: ${sessionId}`);
     }
 }
 
@@ -313,9 +314,9 @@ function remuxToFile(videoPath, sessionId) {
         const config = getConfig();
         const tempFileName = `transcode_${sessionId}.mp4`;
         const tempPath = path.join(TEMP_DIR, tempFileName);
+        const inputFileName = path.basename(videoPath);
         
-        console.log(`[转封装] 开始: ${videoPath}`);
-        console.log(`[转封装] 临时文件: ${tempPath}`);
+        logger.info('[转封装]', `开始 | ${inputFileName}`);
         
         const startTime = Date.now();
         
@@ -350,7 +351,7 @@ function remuxToFile(videoPath, sessionId) {
             if (code === 0 && fs.existsSync(tempPath)) {
                 const fileSize = fs.statSync(tempPath).size;
                 if (fileSize > 1000) {  // 文件大于1KB才算成功
-                    console.log(`[转封装] 完成: ${tempPath} (耗时 ${elapsed}秒)`);
+                    logger.info('[转封装]', `完成 | ${inputFileName} | 耗时 ${elapsed}秒`);
                     transcodedFiles.set(sessionId, {
                         tempPath,
                         originalPath: videoPath,
@@ -362,7 +363,7 @@ function remuxToFile(videoPath, sessionId) {
             }
             
             // 转封装失败，尝试转码
-            console.log(`[转封装] 失败，尝试转码...`);
+            logger.warn('[转封装]', `失败 | ${inputFileName} | 尝试转码...`);
             if (fs.existsSync(tempPath)) {
                 try { fs.unlinkSync(tempPath); } catch (e) {}
             }
@@ -375,7 +376,7 @@ function remuxToFile(videoPath, sessionId) {
         
         ffmpeg.on('error', (err) => {
             activeTranscodes.delete(sessionId);
-            console.error(`[转封装] 进程错误: ${err.message}`);
+            logger.error('[转封装]', `错误 | ${inputFileName} | ${err.message}`);
             // 尝试转码
             transcodeToFile(videoPath, sessionId)
                 .then(resolve)
@@ -392,9 +393,9 @@ function transcodeToFile(videoPath, sessionId) {
         const config = getConfig();
         const tempFileName = `transcode_${sessionId}.mp4`;
         const tempPath = path.join(TEMP_DIR, tempFileName);
+        const inputFileName = path.basename(videoPath);
         
-        console.log(`[转码] 开始: ${videoPath}`);
-        console.log(`[转码] 临时文件: ${tempPath}`);
+        logger.info('[转码]', `开始 | ${inputFileName}`);
         
         const startTime = Date.now();
         
@@ -431,7 +432,7 @@ function transcodeToFile(videoPath, sessionId) {
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
             
             if (code === 0 && fs.existsSync(tempPath)) {
-                console.log(`[转码] 完成: ${tempPath} (耗时 ${elapsed}秒)`);
+                logger.info('[转码]', `完成 | ${inputFileName} | 耗时 ${elapsed}秒`);
                 transcodedFiles.set(sessionId, {
                     tempPath,
                     originalPath: videoPath,
@@ -439,7 +440,7 @@ function transcodeToFile(videoPath, sessionId) {
                 });
                 resolve({ success: true, tempPath, mode: 'transcode' });
             } else {
-                console.error(`[转码] 失败: code=${code}`);
+                logger.error('[转码]', `失败 | ${inputFileName} | code=${code}`);
                 if (fs.existsSync(tempPath)) {
                     try { fs.unlinkSync(tempPath); } catch (e) {}
                 }
@@ -449,7 +450,7 @@ function transcodeToFile(videoPath, sessionId) {
         
         ffmpeg.on('error', (err) => {
             activeTranscodes.delete(sessionId);
-            console.error(`[转码] 进程错误: ${err.message}`);
+            logger.error('[转码]', `错误 | ${inputFileName} | ${err.message}`);
             reject(err);
         });
     });
@@ -518,7 +519,7 @@ app.post('/api/start-transcode', async (req, res) => {
     try {
         // 异步开始，立即返回
         remuxToFile(videoPath, sessionId).catch(err => {
-            console.error(`[转换] 失败: ${err.message}`);
+            logger.error('[转换]', `失败: ${err.message}`);
         });
         
         res.json({ success: true, status: 'started', message: '开始处理' });
@@ -550,8 +551,9 @@ function remuxAndReplace(videoPath) {
         const baseName = path.basename(videoPath, ext);
         const tempPath = path.join(dir, `${baseName}_converting${ext}`);
         const backupPath = path.join(dir, `${baseName}_backup${ext}`);
+        const fileName = path.basename(videoPath);
         
-        console.log(`[批量转封装] 处理: ${videoPath}`);
+        logger.info('[批量转封装]', `处理 | ${fileName}`);
         
         const startTime = Date.now();
         
@@ -589,11 +591,11 @@ function remuxAndReplace(videoPath) {
                         // 删除备份
                         fs.unlinkSync(backupPath);
                         
-                        console.log(`[批量转封装] 成功: ${videoPath} (${elapsed}秒)`);
+                        logger.info('[批量转封装]', `成功 | ${fileName} | 耗时 ${elapsed}秒`);
                         resolve({ success: true, path: videoPath, elapsed });
                         return;
                     } catch (e) {
-                        console.error(`[批量转封装] 替换失败: ${e.message}`);
+                        logger.error('[批量转封装]', `替换失败 | ${fileName} | ${e.message}`);
                         // 恢复备份
                         if (fs.existsSync(backupPath) && !fs.existsSync(videoPath)) {
                             fs.renameSync(backupPath, videoPath);
@@ -610,12 +612,12 @@ function remuxAndReplace(videoPath) {
                 try { fs.renameSync(backupPath, videoPath); } catch (e) {}
             }
             
-            console.log(`[批量转封装] 跳过: ${videoPath} (无需转换或转换失败)`);
+            logger.info('[批量转封装]', `跳过 | ${fileName} | 无需转换或转换失败`);
             resolve({ success: false, path: videoPath, reason: '无需转换或转换失败' });
         });
         
         ffmpeg.on('error', (err) => {
-            console.error(`[批量转封装] 错误: ${err.message}`);
+            logger.error('[批量转封装]', `错误 | ${fileName} | ${err.message}`);
             resolve({ success: false, path: videoPath, reason: err.message });
         });
     });
@@ -699,7 +701,7 @@ app.post('/api/batch-convert', async (req, res) => {
         
         batchConvertStatus.isRunning = false;
         batchConvertStatus.current = '';
-        console.log(`[批量转封装] 完成: 成功 ${batchConvertStatus.completed}, 跳过 ${batchConvertStatus.failed}`);
+        logger.info('[批量转封装]', `完成: 成功 ${batchConvertStatus.completed}, 跳过 ${batchConvertStatus.failed}`);
     })();
 });
 
@@ -747,7 +749,7 @@ app.get('/api/video-stream', async (req, res) => {
                 streamPath = info.tempPath;
                 // 更新访问时间，延长保留
                 info.createTime = Date.now();
-                console.log(`[视频流] 使用转码文件: ${streamPath}`);
+                logger.info('[视频流]', `使用转码文件 | ${path.basename(videoPath)}`);
             }
         }
         
@@ -755,7 +757,7 @@ app.get('/api/video-stream', async (req, res) => {
         streamVideoFile(streamPath, req, res);
         
     } catch (e) {
-        console.error('视频流错误:', e);
+        logger.error('[视频流]', `错误: ${e.message}`);
         res.status(500).send('视频读取失败');
     }
 });
@@ -818,7 +820,7 @@ function cleanupAllTempFiles() {
             if (file.startsWith('transcode_')) {
                 const filePath = path.join(TEMP_DIR, file);
                 fs.unlinkSync(filePath);
-                console.log(`[启动清理] 删除: ${filePath}`);
+                logger.info('[启动清理]', `删除: ${filePath}`);
             }
         }
     } catch (e) {
@@ -1018,9 +1020,13 @@ app.post('/api/clip', (req, res) => {
     
     ffmpegArgs.push('-y', outputPath);  // -y 覆盖已存在的文件
     
-    console.log(`[剪辑] 开始: ${inputPath}`);
-    console.log(`[剪辑] 时间: ${formatDuration(startTime)} -> ${formatDuration(endTime)}`);
-    console.log(`[剪辑] 输出: ${outputPath}`);
+    // 获取文件名用于日志显示
+    const inputFileName = path.basename(inputPath);
+    const outputFileName = path.basename(outputPath);
+    const clipStartTime = Date.now();
+    
+    // 合并日志：一行显示所有开始信息
+    logger.info('[剪辑]', `开始 | ${inputFileName} | ${formatDuration(startTime)} -> ${formatDuration(endTime)} | 输出: ${outputFileName}`);
     
     const ffmpeg = spawn(config.ffmpegPath, ffmpegArgs);
     
@@ -1031,15 +1037,17 @@ app.post('/api/clip', (req, res) => {
     });
     
     ffmpeg.on('close', (code) => {
+        const elapsed = ((Date.now() - clipStartTime) / 1000).toFixed(2);
         if (code === 0) {
-            console.log(`[剪辑] 完成: ${outputPath}`);
+            // 合并日志：一行显示完成信息和耗时
+            logger.info('[剪辑]', `完成 | ${inputFileName} -> ${outputFileName} | 耗时 ${elapsed}秒`);
             res.json({ 
                 success: true, 
                 outputPath,
                 message: '剪辑完成！'
             });
         } else {
-            console.error(`[剪辑] 失败: ${stderr}`);
+            logger.error('[剪辑]', `失败 | ${inputFileName} | 耗时 ${elapsed}秒 | ${stderr.substring(0, 200)}`);
             res.json({ 
                 success: false, 
                 error: '剪辑失败',
@@ -1049,7 +1057,7 @@ app.post('/api/clip', (req, res) => {
     });
     
     ffmpeg.on('error', (err) => {
-        console.error(`[剪辑] 错误: ${err.message}`);
+        logger.error('[剪辑]', `错误 | ${inputFileName} | ${err.message}`);
         res.json({ 
             success: false, 
             error: `执行ffmpeg失败: ${err.message}`
@@ -1099,14 +1107,15 @@ function formatDuration(seconds) {
 // ==================== 启动服务 ====================
 
 app.listen(PORT, () => {
-    console.log('');
-    console.log('╔══════════════════════════════════════════════════════════╗');
-    console.log('║           🎬 视频剪辑工具 已启动                          ║');
-    console.log('╠══════════════════════════════════════════════════════════╣');
-    console.log(`║  访问地址: http://localhost:${PORT}                          ║`);
-    console.log('║  按 Ctrl+C 停止服务                                       ║');
-    console.log('╚══════════════════════════════════════════════════════════╝');
-    console.log('');
+    logger.raw('');
+    logger.raw('============================================================');
+    logger.raw('           视频剪辑工具 已启动');
+    logger.raw('============================================================');
+    logger.raw(`  访问地址: http://localhost:${PORT}`);
+    logger.raw('  按 Ctrl+C 停止服务');
+    logger.raw(`  日志目录: ${logger.getLogDir()}`);
+    logger.raw('============================================================');
+    logger.raw('');
     
     // 确保输出目录存在
     ensureOutputDir();

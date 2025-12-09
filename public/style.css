@@ -103,6 +103,7 @@ body {
     display: flex;
     flex: 1;
     overflow: hidden;
+    height: calc(100vh - var(--header-height)); /* 限制高度确保不会超出视口 */
 }
 
 /* ======== 文件浏览器 ======== */
@@ -113,6 +114,7 @@ body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    max-height: calc(100vh - var(--header-height)); /* 限制最大高度 */
 }
 
 .panel-header {
@@ -202,6 +204,7 @@ body {
     flex: 1;
     overflow-y: auto;
     padding: 8px;
+    min-height: 0; /* 确保 flex 收缩正常工作 */
 }
 
 .file-item {
