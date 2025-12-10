@@ -26,7 +26,24 @@ const CONFIG_FILE = path.join(__dirname, 'config.json');
 function getConfig() {
     try {
         if (fs.existsSync(CONFIG_FILE)) {
-            return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+            const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+            
+            // 检查 lastBrowsePath 是否存在，不存在则清除
+            if (config.lastBrowsePath) {
+                try {
+                    if (!fs.existsSync(config.lastBrowsePath)) {
+                        logger.warn('[配置]', `上次浏览路径不存在，已清除: ${config.lastBrowsePath}`);
+                        config.lastBrowsePath = '';
+                        // 保存更新后的配置
+                        fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+                    }
+                } catch (e) {
+                    // 路径无法访问，清除
+                    config.lastBrowsePath = '';
+                }
+            }
+            
+            return config;
         }
     } catch (e) {
         logger.error('[配置]', `读取配置失败: ${e.message}`);
@@ -124,6 +141,31 @@ app.get('/api/test-ffmpeg', (req, res) => {
 });
 
 /**
+ * 获取Windows驱动器列表（使用Node.js方式，兼容所有Windows版本）
+ */
+function getWindowsDrives() {
+    const drives = [];
+    // 检查 A-Z 盘符
+    for (let i = 65; i <= 90; i++) {
+        const driveLetter = String.fromCharCode(i);
+        const drivePath = `${driveLetter}:\\`;
+        try {
+            // 尝试访问该盘符，如果存在则添加到列表
+            fs.accessSync(drivePath, fs.constants.R_OK);
+            drives.push({
+                name: `${driveLetter}:`,
+                path: drivePath,
+                isDirectory: true,
+                isDrive: true
+            });
+        } catch (e) {
+            // 盘符不存在或无法访问，跳过
+        }
+    }
+    return drives;
+}
+
+/**
  * 浏览文件夹
  */
 app.get('/api/browse', (req, res) => {
@@ -132,23 +174,9 @@ app.get('/api/browse', (req, res) => {
     // 如果没有提供路径，返回驱动器列表（Windows）或根目录（Linux/Mac）
     if (!dirPath) {
         if (os.platform() === 'win32') {
-            // Windows: 获取驱动器列表
-            exec('wmic logicaldisk get name', (error, stdout) => {
-                if (error) {
-                    res.json({ success: false, error: error.message });
-                    return;
-                }
-                const drives = stdout.split('\n')
-                    .map(line => line.trim())
-                    .filter(line => /^[A-Z]:$/.test(line))
-                    .map(drive => ({
-                        name: drive,
-                        path: drive + '\\',
-                        isDirectory: true,
-                        isDrive: true
-                    }));
-                res.json({ success: true, path: '', items: drives, isRoot: true });
-            });
+            // Windows: 使用Node.js方式获取驱动器列表（兼容所有Windows版本）
+            const drives = getWindowsDrives();
+            res.json({ success: true, path: '', items: drives, isRoot: true });
             return;
         } else {
             dirPath = '/';
@@ -541,6 +569,16 @@ let batchConvertStatus = {
 };
 
 /**
+ * 格式化文件大小
+ */
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+/**
  * 转封装单个文件（替换原文件）
  */
 function remuxAndReplace(videoPath) {
@@ -553,7 +591,13 @@ function remuxAndReplace(videoPath) {
         const backupPath = path.join(dir, `${baseName}_backup${ext}`);
         const fileName = path.basename(videoPath);
         
-        logger.info('[批量转封装]', `处理 | ${fileName}`);
+        // 获取文件大小
+        let fileSize = 0;
+        try {
+            fileSize = fs.statSync(videoPath).size;
+        } catch (e) {}
+        
+        logger.info('[批量转封装]', `处理 | ${fileName} | ${formatFileSize(fileSize)}`);
         
         const startTime = Date.now();
         
@@ -591,8 +635,8 @@ function remuxAndReplace(videoPath) {
                         // 删除备份
                         fs.unlinkSync(backupPath);
                         
-                        logger.info('[批量转封装]', `成功 | ${fileName} | 耗时 ${elapsed}秒`);
-                        resolve({ success: true, path: videoPath, elapsed });
+                        logger.info('[批量转封装]', `成功 | ${fileName} | ${formatFileSize(fileSize)} | 耗时 ${elapsed}秒`);
+                        resolve({ success: true, path: videoPath, elapsed, fileSize });
                         return;
                     } catch (e) {
                         logger.error('[批量转封装]', `替换失败 | ${fileName} | ${e.message}`);
