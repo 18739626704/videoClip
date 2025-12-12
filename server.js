@@ -21,9 +21,32 @@ app.use(express.static(path.join(__dirname, 'public')));
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 /**
+ * 获取默认输出目录
+ */
+function getDefaultOutputDir() {
+    return path.join(__dirname, 'output');
+}
+
+/**
+ * 检查路径的父目录是否存在（用于判断路径是否可创建）
+ */
+function isPathCreatable(targetPath) {
+    try {
+        // 获取父目录
+        const parentDir = path.dirname(targetPath);
+        // 检查父目录是否存在
+        return fs.existsSync(parentDir);
+    } catch (e) {
+        return false;
+    }
+}
+
+/**
  * 获取配置（ffmpeg路径等）
  */
 function getConfig() {
+    let configChanged = false;
+    
     try {
         if (fs.existsSync(CONFIG_FILE)) {
             const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
@@ -34,13 +57,30 @@ function getConfig() {
                     if (!fs.existsSync(config.lastBrowsePath)) {
                         logger.warn('[配置]', `上次浏览路径不存在，已清除: ${config.lastBrowsePath}`);
                         config.lastBrowsePath = '';
-                        // 保存更新后的配置
-                        fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+                        configChanged = true;
                     }
                 } catch (e) {
                     // 路径无法访问，清除
                     config.lastBrowsePath = '';
+                    configChanged = true;
                 }
+            }
+            
+            // 检查 outputDir 是否可用（存在或可创建）
+            if (config.outputDir) {
+                const outputExists = fs.existsSync(config.outputDir);
+                const canCreate = !outputExists && isPathCreatable(config.outputDir);
+                
+                if (!outputExists && !canCreate) {
+                    logger.warn('[配置]', `输出目录不可用，已重置为默认: ${config.outputDir}`);
+                    config.outputDir = getDefaultOutputDir();
+                    configChanged = true;
+                }
+            }
+            
+            // 保存更新后的配置
+            if (configChanged) {
+                fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
             }
             
             return config;
@@ -51,7 +91,7 @@ function getConfig() {
     // 默认配置
     return {
         ffmpegPath: 'ffmpeg',  // 默认使用系统PATH中的ffmpeg
-        outputDir: path.join(__dirname, 'output')
+        outputDir: getDefaultOutputDir()
     };
 }
 
@@ -67,10 +107,27 @@ function saveConfig(config) {
  */
 function ensureOutputDir() {
     const config = getConfig();
-    if (!fs.existsSync(config.outputDir)) {
-        fs.mkdirSync(config.outputDir, { recursive: true });
+    let outputDir = config.outputDir || getDefaultOutputDir();
+    
+    try {
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+        }
+    } catch (e) {
+        // 创建失败，使用默认目录
+        logger.warn('[配置]', `无法创建输出目录 ${outputDir}，使用默认目录`);
+        outputDir = getDefaultOutputDir();
+        
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+        }
+        
+        // 更新配置
+        config.outputDir = outputDir;
+        saveConfig(config);
     }
-    return config.outputDir;
+    
+    return outputDir;
 }
 
 // ==================== API 路由 ====================
