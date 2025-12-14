@@ -30,6 +30,15 @@ const state = {
     fileExistsConfirm: {
         pendingClip: null,     // 待执行的剪辑参数
         existingPath: ''       // 已存在的文件路径
+    },
+    
+    // RTSP 推流状态
+    rtsp: {
+        serverRunning: false,  // 服务器是否运行
+        isStreaming: false,    // 是否正在推流
+        currentTime: 0,        // 当前推流时间
+        rtspUrl: '',           // RTSP 地址
+        statusPollInterval: null // 状态轮询定时器
     }
 };
 
@@ -59,6 +68,11 @@ async function stopCurrentTranscode() {
 async function closeVideo() {
     await stopCurrentTranscode();
     
+    // 停止 RTSP 推流
+    if (state.rtsp.isStreaming) {
+        await stopRtspStream();
+    }
+    
     // 重置状态
     state.activeVideo = null;
     state.videoSupported = false;
@@ -76,6 +90,7 @@ async function closeVideo() {
     DOM.videoContainer.style.display = 'none';
     DOM.timelinePanel.style.display = 'none';
     DOM.resultPanel.style.display = 'none';
+    DOM.rtspPanel.style.display = 'none';
     
     // 显示初始提示
     DOM.noVideoHint.style.display = 'flex';
@@ -172,7 +187,27 @@ const DOM = {
     // 视频信息栏
     videoHeader: document.getElementById('videoHeader'),
     videoName: document.getElementById('videoName'),
-    btnCloseVideo: document.getElementById('btnCloseVideo')
+    btnCloseVideo: document.getElementById('btnCloseVideo'),
+    
+    // RTSP 推流
+    rtspPanel: document.getElementById('rtspPanel'),
+    rtspStatusDot: document.getElementById('rtspStatusDot'),
+    rtspStatusText: document.getElementById('rtspStatusText'),
+    rtspUrl: document.getElementById('rtspUrl'),
+    btnCopyRtspUrl: document.getElementById('btnCopyRtspUrl'),
+    rtspCurrentTime: document.getElementById('rtspCurrentTime'),
+    rtspTotalTime: document.getElementById('rtspTotalTime'),
+    syncStatus: document.getElementById('syncStatus'),
+    btnStartStream: document.getElementById('btnStartStream'),
+    btnSyncStream: document.getElementById('btnSyncStream'),
+    btnStopStream: document.getElementById('btnStopStream'),
+    
+    // RTSP 设置
+    settingMediamtxPath: document.getElementById('settingMediamtxPath'),
+    btnBrowseMediamtx: document.getElementById('btnBrowseMediamtx'),
+    settingRtspPort: document.getElementById('settingRtspPort'),
+    settingStreamName: document.getElementById('settingStreamName'),
+    rtspUrlPreview: document.getElementById('rtspUrlPreview')
 };
 
 // ==================== 工具函数 ====================
@@ -388,6 +423,14 @@ async function setActiveVideo(path, name) {
     DOM.videoPlayer.style.display = 'none';
     DOM.timelinePanel.style.display = 'none';
     DOM.resultPanel.style.display = 'none';
+    
+    // 显示 RTSP 面板（如果已配置 MediaMTX）
+    const rtspConfig = await api('/api/rtsp/config');
+    if (rtspConfig.success && rtspConfig.mediamtxPath) {
+        DOM.rtspPanel.style.display = 'block';
+        // 更新 RTSP UI 状态（确保按钮正确启用）
+        updateRtspUI();
+    }
     
     // 显示加载提示
     showResult('🔄 正在检测视频格式...', 'info');
@@ -783,6 +826,359 @@ function showResult(message, type = 'info') {
     DOM.resultPanel.appendChild(content);
 }
 
+// ==================== RTSP 推流 ====================
+
+/**
+ * 初始化 RTSP 功能
+ */
+async function initRtsp() {
+    // 加载 RTSP 配置
+    const config = await api('/api/rtsp/config');
+    if (config.success) {
+        if (DOM.settingMediamtxPath) DOM.settingMediamtxPath.value = config.mediamtxPath || '';
+        if (DOM.settingRtspPort) DOM.settingRtspPort.value = config.rtspPort || 8554;
+        if (DOM.settingStreamName) DOM.settingStreamName.value = config.streamName || 'live';
+        updateRtspUrlPreview();
+    }
+    
+    // 检查服务器和推流状态（处理页面刷新后的状态恢复）
+    await checkRtspStreamStatus();
+}
+
+/**
+ * 更新 RTSP 地址预览
+ */
+async function updateRtspUrlPreview() {
+    const result = await api('/api/rtsp/local-ip');
+    const ip = result.success ? result.ip : '127.0.0.1';
+    const port = DOM.settingRtspPort?.value || 8554;
+    const streamName = DOM.settingStreamName?.value || 'live';
+    
+    if (DOM.rtspUrlPreview) {
+        DOM.rtspUrlPreview.textContent = `rtsp://${ip}:${port}/${streamName}`;
+    }
+}
+
+/**
+ * 检查 RTSP 服务器状态
+ */
+async function checkRtspServerStatus() {
+    const result = await api('/api/rtsp/server/status');
+    if (result.success) {
+        state.rtsp.serverRunning = result.running;
+        updateRtspUI();
+    }
+}
+
+/**
+ * 检查 RTSP 推流状态（用于页面刷新后恢复）
+ */
+async function checkRtspStreamStatus() {
+    const result = await api('/api/rtsp/stream/status');
+    if (result.success) {
+        state.rtsp.serverRunning = result.serverRunning;
+        state.rtsp.isStreaming = result.isStreaming;
+        state.rtsp.currentTime = result.currentTime || 0;
+        state.rtsp.rtspUrl = result.rtspUrl || '';
+        
+        // 如果有正在进行的推流，更新UI
+        if (result.isStreaming) {
+            // 显示 RTSP 面板
+            if (DOM.rtspPanel) {
+                DOM.rtspPanel.style.display = 'block';
+            }
+            if (DOM.rtspUrl && result.rtspUrl) {
+                DOM.rtspUrl.value = result.rtspUrl;
+            }
+            // 开始轮询状态
+            startRtspStatusPolling();
+        }
+        
+        updateRtspUI();
+    }
+}
+
+/**
+ * 启动 RTSP 服务器
+ */
+async function startRtspServer() {
+    const result = await api('/api/rtsp/server/start', { method: 'POST' });
+    if (result.success) {
+        state.rtsp.serverRunning = true;
+        updateRtspUI();
+        // 开始轮询状态
+        startRtspStatusPolling();
+    } else {
+        showResult(`❌ RTSP 服务器启动失败: ${result.error}`, 'error');
+    }
+    return result.success;
+}
+
+/**
+ * 停止 RTSP 服务器
+ */
+async function stopRtspServer() {
+    await api('/api/rtsp/server/stop', { method: 'POST' });
+    state.rtsp.serverRunning = false;
+    state.rtsp.isStreaming = false;
+    stopRtspStatusPolling();
+    updateRtspUI();
+}
+
+/**
+ * 开始推流
+ */
+async function startRtspStream() {
+    if (!state.activeVideo) {
+        showResult('⚠️ 请先选择视频', 'error');
+        return;
+    }
+    
+    // 检查是否配置了 MediaMTX
+    const rtspConfig = await api('/api/rtsp/config');
+    if (!rtspConfig.success || !rtspConfig.mediamtxPath) {
+        showResult('⚠️ 请先在设置中配置 MediaMTX 路径', 'error');
+        return;
+    }
+    
+    // 如果服务器未启动，先启动
+    if (!state.rtsp.serverRunning) {
+        showResult('🔄 正在启动 RTSP 服务器...', 'info');
+        const started = await startRtspServer();
+        if (!started) return;
+        // 等待服务器完全启动
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    // 从当前播放位置开始推流
+    const startTime = state.videoSupported ? DOM.videoPlayer.currentTime : 0;
+    
+    showResult('🔄 正在启动推流...', 'info');
+    
+    const result = await api('/api/rtsp/stream/start', {
+        method: 'POST',
+        body: {
+            videoPath: state.activeVideo.path,
+            startTime: startTime
+        }
+    });
+    
+    if (result.success) {
+        state.rtsp.isStreaming = true;
+        state.rtsp.rtspUrl = result.rtspUrl;
+        state.rtsp.currentTime = startTime;
+        
+        if (DOM.rtspUrl) DOM.rtspUrl.value = result.rtspUrl;
+        
+        // 开始推流时自动播放视频预览
+        if (state.videoSupported && DOM.videoPlayer.paused) {
+            DOM.videoPlayer.play();
+        }
+        
+        // 开始轮询状态
+        startRtspStatusPolling();
+        updateRtspUI();
+        
+        showResult(`✅ 推流已开始<br>地址: <code>${result.rtspUrl}</code><br><small>可用 VLC 或 PotPlayer 打开此地址</small>`, 'success');
+    } else {
+        state.rtsp.isStreaming = false;
+        updateRtspUI();
+        showResult(`❌ 推流失败: ${result.error}<br><small>请检查日志获取详细信息</small>`, 'error');
+    }
+}
+
+/**
+ * 同步推流到当前预览时间（会重启FFmpeg）
+ */
+async function syncRtspToCurrentTime() {
+    if (!state.rtsp.isStreaming || !state.activeVideo) {
+        showResult('⚠️ 当前没有正在进行的推流', 'error');
+        return;
+    }
+    
+    const currentTime = state.videoSupported ? DOM.videoPlayer.currentTime : 0;
+    
+    showResult('🔄 正在同步推流时间...', 'info');
+    
+    // 重新开始推流到当前时间点
+    const result = await api('/api/rtsp/stream/start', {
+        method: 'POST',
+        body: {
+            videoPath: state.activeVideo.path,
+            startTime: currentTime
+        }
+    });
+    
+    if (result.success) {
+        state.rtsp.currentTime = currentTime;
+        updateRtspUI();
+        showResult(`✅ 已同步到 ${formatTime(currentTime)}<br><small>播放器可能需要几秒钟重新连接</small>`, 'success');
+    } else {
+        showResult(`❌ 同步失败: ${result.error}`, 'error');
+    }
+}
+
+/**
+ * 停止推流
+ */
+async function stopRtspStream() {
+    await api('/api/rtsp/stream/stop', { method: 'POST' });
+    state.rtsp.isStreaming = false;
+    state.rtsp.isPaused = false;
+    updateRtspUI();
+}
+
+/**
+ * 开始轮询 RTSP 状态
+ */
+function startRtspStatusPolling() {
+    if (state.rtsp.statusPollInterval) return;
+    
+    state.rtsp.statusPollInterval = setInterval(async () => {
+        const result = await api('/api/rtsp/stream/status');
+        if (result.success) {
+            state.rtsp.serverRunning = result.serverRunning;
+            state.rtsp.isStreaming = result.isStreaming;
+            state.rtsp.isPaused = result.isPaused;
+            state.rtsp.currentTime = result.currentTime;
+            
+            if (result.rtspUrl && DOM.rtspUrl) {
+                DOM.rtspUrl.value = result.rtspUrl;
+            }
+            
+            updateRtspUI();
+            
+            // 如果推流已结束，停止轮询
+            if (!result.isStreaming && !result.serverRunning) {
+                stopRtspStatusPolling();
+            }
+        }
+    }, 1000);
+}
+
+/**
+ * 停止轮询 RTSP 状态
+ */
+function stopRtspStatusPolling() {
+    if (state.rtsp.statusPollInterval) {
+        clearInterval(state.rtsp.statusPollInterval);
+        state.rtsp.statusPollInterval = null;
+    }
+}
+
+/**
+ * 更新 RTSP UI
+ */
+function updateRtspUI() {
+    // 更新状态指示器
+    if (DOM.rtspStatusDot) {
+        DOM.rtspStatusDot.className = 'status-dot';
+        if (state.rtsp.isStreaming) {
+            DOM.rtspStatusDot.classList.add('streaming');
+            if (DOM.rtspStatusText) DOM.rtspStatusText.textContent = '推流中';
+        } else if (state.rtsp.serverRunning) {
+            if (DOM.rtspStatusText) DOM.rtspStatusText.textContent = '服务就绪';
+        } else {
+            if (DOM.rtspStatusText) DOM.rtspStatusText.textContent = '未连接';
+        }
+    }
+    
+    // 更新时间显示
+    if (DOM.rtspCurrentTime) {
+        DOM.rtspCurrentTime.textContent = formatTime(state.rtsp.currentTime);
+    }
+    if (DOM.rtspTotalTime) {
+        DOM.rtspTotalTime.textContent = formatTime(state.duration || 0);
+    }
+    
+    // 更新按钮状态
+    if (DOM.btnStartStream) {
+        const btnText = DOM.btnStartStream.querySelector('.btn-text');
+        const btnIcon = DOM.btnStartStream.querySelector('.btn-icon');
+        
+        if (state.rtsp.isStreaming) {
+            DOM.btnStartStream.classList.add('active');
+            if (btnText) btnText.textContent = '推流中';
+            if (btnIcon) btnIcon.textContent = '📡';
+            // 推流中时仍然允许点击（用于重新开始）
+            DOM.btnStartStream.disabled = false;
+        } else {
+            DOM.btnStartStream.classList.remove('active');
+            if (btnText) btnText.textContent = '开始推流';
+            if (btnIcon) btnIcon.textContent = '▶';
+            // 未选择视频时禁用
+            DOM.btnStartStream.disabled = !state.activeVideo;
+        }
+    }
+    
+    if (DOM.btnSyncStream) {
+        DOM.btnSyncStream.disabled = !state.rtsp.isStreaming;
+    }
+    
+    if (DOM.btnStopStream) {
+        DOM.btnStopStream.disabled = !state.rtsp.isStreaming;
+    }
+    
+    // 更新同步状态
+    updateSyncStatus();
+}
+
+/**
+ * 更新同步状态显示
+ */
+function updateSyncStatus() {
+    if (!DOM.syncStatus) return;
+    
+    const syncIcon = DOM.syncStatus.querySelector('.sync-icon');
+    const syncText = DOM.syncStatus.querySelector('.sync-text');
+    
+    if (!syncIcon || !syncText) return;
+    
+    if (!state.rtsp.isStreaming) {
+        DOM.syncStatus.className = 'sync-status';
+        syncIcon.textContent = '📡';
+        syncText.textContent = '未推流';
+        return;
+    }
+    
+    // 计算与视频预览的时间差
+    const previewTime = state.videoSupported ? state.currentTime : 0;
+    const timeDiff = Math.abs(previewTime - state.rtsp.currentTime);
+    
+    if (timeDiff < 3) {
+        DOM.syncStatus.className = 'sync-status synced';
+        syncIcon.textContent = '✓';
+        syncText.textContent = '时间一致';
+    } else {
+        DOM.syncStatus.className = 'sync-status';
+        syncIcon.textContent = '📍';
+        syncText.textContent = `差异 ${timeDiff.toFixed(0)}s`;
+    }
+}
+
+/**
+ * 复制 RTSP 地址
+ */
+async function copyRtspUrl() {
+    const url = DOM.rtspUrl?.value;
+    if (!url) return;
+    
+    try {
+        await navigator.clipboard.writeText(url);
+        DOM.btnCopyRtspUrl.classList.add('copied');
+        DOM.btnCopyRtspUrl.textContent = '✓';
+        
+        setTimeout(() => {
+            DOM.btnCopyRtspUrl.classList.remove('copied');
+            DOM.btnCopyRtspUrl.textContent = '📋';
+        }, 2000);
+    } catch (e) {
+        // 回退方案
+        DOM.rtspUrl.select();
+        document.execCommand('copy');
+    }
+}
+
 // ==================== 批量转封装 ====================
 
 /**
@@ -916,17 +1312,37 @@ async function loadSettings() {
     const result = await api('/api/config');
     if (result.ffmpegPath) DOM.settingFfmpegPath.value = result.ffmpegPath;
     if (result.outputDir) DOM.settingOutputDir.value = result.outputDir;
+    
+    // 加载 RTSP 设置
+    const rtspConfig = await api('/api/rtsp/config');
+    if (rtspConfig.success) {
+        if (DOM.settingMediamtxPath) DOM.settingMediamtxPath.value = rtspConfig.mediamtxPath || '';
+        if (DOM.settingRtspPort) DOM.settingRtspPort.value = rtspConfig.rtspPort || 8554;
+        if (DOM.settingStreamName) DOM.settingStreamName.value = rtspConfig.streamName || 'live';
+        updateRtspUrlPreview();
+    }
 }
 
 /**
  * 保存设置
  */
 async function saveSettings() {
+    // 保存基本设置
     const result = await api('/api/config', {
         method: 'POST',
         body: {
             ffmpegPath: DOM.settingFfmpegPath.value,
             outputDir: DOM.settingOutputDir.value
+        }
+    });
+    
+    // 保存 RTSP 设置
+    await api('/api/rtsp/config', {
+        method: 'POST',
+        body: {
+            mediamtxPath: DOM.settingMediamtxPath?.value || '',
+            rtspPort: parseInt(DOM.settingRtspPort?.value) || 8554,
+            streamName: DOM.settingStreamName?.value || 'live'
         }
     });
     
@@ -1164,6 +1580,52 @@ function bindEvents() {
             handleFileExistsCancel();
         }
     });
+    
+    // RTSP 推流控制
+    if (DOM.btnStartStream) {
+        DOM.btnStartStream.addEventListener('click', async () => {
+            // 如果已经在推流，先停止再开始（重新开始）
+            if (state.rtsp.isStreaming) {
+                await stopRtspStream();
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            await startRtspStream();
+        });
+    }
+    
+    if (DOM.btnSyncStream) {
+        DOM.btnSyncStream.addEventListener('click', syncRtspToCurrentTime);
+    }
+    
+    if (DOM.btnStopStream) {
+        DOM.btnStopStream.addEventListener('click', stopRtspStream);
+    }
+    
+    if (DOM.btnCopyRtspUrl) {
+        DOM.btnCopyRtspUrl.addEventListener('click', copyRtspUrl);
+    }
+    
+    // RTSP 设置 - MediaMTX 路径选择
+    if (DOM.btnBrowseMediamtx) {
+        DOM.btnBrowseMediamtx.addEventListener('click', () => {
+            openFileBrowser({
+                mode: 'file',
+                title: '📂 选择 mediamtx.exe',
+                filter: (item) => item.name.match(/mediamtx(\.exe)?$/i),
+                callback: (path) => {
+                    DOM.settingMediamtxPath.value = path;
+                }
+            });
+        });
+    }
+    
+    // RTSP 端口和路径名变化时更新预览
+    if (DOM.settingRtspPort) {
+        DOM.settingRtspPort.addEventListener('input', updateRtspUrlPreview);
+    }
+    if (DOM.settingStreamName) {
+        DOM.settingStreamName.addEventListener('input', updateRtspUrlPreview);
+    }
 }
 
 // ==================== 初始化 ====================
@@ -1174,6 +1636,9 @@ async function init() {
     
     // 初始化时间轴拖拽
     initTimelineDrag();
+    
+    // 初始化 RTSP 功能
+    await initRtsp();
     
     // 读取配置，获取上次浏览的路径
     const config = await api('/api/config');
@@ -1188,12 +1653,17 @@ async function init() {
         showResult('⚠️ FFmpeg 未配置或不可用，请点击右上角设置按钮配置 FFmpeg 路径', 'error');
     }
     
-    // 页面关闭/刷新时停止转码进程
+    // 页面关闭/刷新时停止转码进程和推流
     window.addEventListener('beforeunload', () => {
         if (state.videoSessionId) {
             // 使用 sendBeacon 确保请求能发出
             const data = new Blob([JSON.stringify({ sessionId: state.videoSessionId })], { type: 'application/json' });
             navigator.sendBeacon('/api/stop-transcode', data);
+        }
+        
+        // 停止 RTSP 推流
+        if (state.rtsp.isStreaming) {
+            navigator.sendBeacon('/api/rtsp/stream/stop', new Blob(['{}'], { type: 'application/json' }));
         }
     });
 }

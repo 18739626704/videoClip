@@ -1008,3 +1008,277 @@ body {
     box-shadow: 0 4px 20px rgba(248, 81, 73, 0.3) !important;
 }
 
+/* ======== RTSP 推流面板 ======== */
+.rtsp-panel {
+    background: var(--bg-card);
+    border-radius: var(--border-radius-lg);
+    padding: 16px 20px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+}
+
+.rtsp-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+
+.rtsp-header h3 {
+    font-size: 15px;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.rtsp-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.status-dot.connecting {
+    background: var(--warning);
+    animation: pulse 1.5s infinite;
+}
+
+.status-dot.streaming {
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+}
+
+.status-dot.paused {
+    background: var(--warning);
+}
+
+.status-dot.error {
+    background: var(--error);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.rtsp-url-section {
+    margin-bottom: 14px;
+}
+
+.rtsp-url-container {
+    display: flex;
+    gap: 8px;
+}
+
+.rtsp-url-container input {
+    flex: 1;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 10px 14px;
+    color: var(--primary);
+    font-size: 13px;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.btn-copy {
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.15s ease;
+}
+
+.btn-copy:hover {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+.btn-copy.copied {
+    background: var(--success);
+    border-color: var(--success);
+}
+
+.rtsp-progress-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    padding: 10px 14px;
+    background: var(--bg-dark);
+    border-radius: var(--border-radius);
+}
+
+.rtsp-time-display {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 15px;
+}
+
+.rtsp-time-display #rtspCurrentTime {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.rtsp-time-separator {
+    color: var(--text-muted);
+    margin: 0 6px;
+}
+
+.rtsp-time-display #rtspTotalTime {
+    color: var(--text-secondary);
+}
+
+.sync-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.sync-status.synced {
+    color: var(--success);
+}
+
+.sync-status.syncing {
+    color: var(--warning);
+}
+
+.sync-icon {
+    font-size: 14px;
+}
+
+.rtsp-controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.btn-rtsp {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 16px;
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    color: var(--text-primary);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-rtsp:hover:not(:disabled) {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #000;
+}
+
+.btn-rtsp:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 确保按钮内的子元素不会单独响应点击 */
+.btn-rtsp .btn-icon,
+.btn-rtsp .btn-text {
+    pointer-events: none;
+}
+
+.btn-rtsp .btn-icon {
+    font-size: 14px;
+}
+
+.btn-rtsp.btn-stop:hover:not(:disabled) {
+    background: var(--error);
+    border-color: var(--error);
+    color: #fff;
+}
+
+.btn-rtsp.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #000;
+}
+
+.rtsp-hint {
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+/* 设置弹窗 - RTSP 部分 */
+.settings-divider {
+    margin: 24px 0 18px;
+    position: relative;
+    text-align: center;
+}
+
+.settings-divider::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    background: var(--border);
+}
+
+.settings-divider span {
+    position: relative;
+    background: var(--bg-card);
+    padding: 0 12px;
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.form-group-inline {
+    display: flex;
+    gap: 16px;
+}
+
+.form-group-inline .form-group-item {
+    flex: 1;
+}
+
+.form-group-inline .form-group-item label {
+    display: block;
+    font-size: 14px;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+}
+
+.form-group-inline .form-group-item input {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 10px 14px;
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.rtsp-url-preview {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 10px 14px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 13px;
+    color: var(--primary);
+}
+

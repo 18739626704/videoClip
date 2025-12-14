@@ -1205,6 +1205,589 @@ function formatDuration(seconds) {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
+// ==================== RTSP 推流功能 ====================
+
+// RTSP 推流状态
+const rtspState = {
+    serverProcess: null,      // MediaMTX 进程
+    serverRunning: false,     // 服务器是否运行中
+    streamProcess: null,      // FFmpeg 推流进程
+    isStreaming: false,       // 是否正在推流
+    isPaused: false,          // 是否暂停（推送静帧中）
+    currentVideoPath: null,   // 当前推流的视频路径
+    currentTime: 0,           // 当前推流时间（秒）
+    startTime: 0,             // 推流开始时间点
+    duration: 0,              // 视频总时长
+    speed: 1,                 // 推流速度
+    streamStartTimestamp: 0,  // 推流开始的时间戳（用于计算当前时间）
+    pauseFramePath: null      // 暂停时的静帧图片路径
+};
+
+/**
+ * 获取本机IP地址
+ */
+function getLocalIP() {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            // 跳过内部地址和非IPv4地址
+            if (iface.family === 'IPv4' && !iface.internal) {
+                return iface.address;
+            }
+        }
+    }
+    return '127.0.0.1';
+}
+
+/**
+ * 获取RTSP配置
+ */
+function getRtspConfig() {
+    const config = getConfig();
+    return {
+        mediamtxPath: config.mediamtxPath || '',
+        rtspPort: config.rtspPort || 8554,
+        streamName: config.streamName || 'live'
+    };
+}
+
+/**
+ * 保存RTSP配置
+ */
+function saveRtspConfig(rtspConfig) {
+    const config = getConfig();
+    if (rtspConfig.mediamtxPath !== undefined) config.mediamtxPath = rtspConfig.mediamtxPath;
+    if (rtspConfig.rtspPort !== undefined) config.rtspPort = rtspConfig.rtspPort;
+    if (rtspConfig.streamName !== undefined) config.streamName = rtspConfig.streamName;
+    saveConfig(config);
+}
+
+/**
+ * 获取RTSP配置API
+ */
+app.get('/api/rtsp/config', (req, res) => {
+    const rtspConfig = getRtspConfig();
+    res.json({
+        success: true,
+        ...rtspConfig,
+        localIP: getLocalIP()
+    });
+});
+
+/**
+ * 保存RTSP配置API
+ */
+app.post('/api/rtsp/config', (req, res) => {
+    const { mediamtxPath, rtspPort, streamName } = req.body;
+    saveRtspConfig({ mediamtxPath, rtspPort, streamName });
+    res.json({ success: true });
+});
+
+/**
+ * 启动MediaMTX服务器
+ */
+app.post('/api/rtsp/server/start', (req, res) => {
+    const rtspConfig = getRtspConfig();
+    
+    if (!rtspConfig.mediamtxPath) {
+        res.json({ success: false, error: '请先配置 MediaMTX 路径' });
+        return;
+    }
+    
+    if (!fs.existsSync(rtspConfig.mediamtxPath)) {
+        res.json({ success: false, error: 'MediaMTX 文件不存在' });
+        return;
+    }
+    
+    if (rtspState.serverRunning) {
+        res.json({ success: true, message: '服务器已在运行' });
+        return;
+    }
+    
+    try {
+        // 启动 MediaMTX，设置端口
+        const mediamtxDir = path.dirname(rtspConfig.mediamtxPath);
+        
+        // 创建临时配置文件以设置端口（禁用所有认证）
+        const configContent = `
+# 日志级别
+logLevel: info
+logDestinations: [stdout]
+
+# RTSP 服务
+rtspAddress: :${rtspConfig.rtspPort}
+
+# 禁用其他协议（减少端口占用）
+rtmpDisable: yes
+hlsDisable: yes
+webrtcDisable: yes
+
+# API（可选，用于调试）
+apiAddress: ""
+
+# 路径配置 - 允许任何人推流和观看
+paths:
+  all:
+    source: publisher
+    # 禁用推流认证
+    publishUser:
+    publishPass:
+    # 禁用观看认证  
+    readUser:
+    readPass:
+`;
+        const tempConfigPath = path.join(mediamtxDir, 'mediamtx_temp.yml');
+        fs.writeFileSync(tempConfigPath, configContent, 'utf-8');
+        
+        rtspState.serverProcess = spawn(rtspConfig.mediamtxPath, [tempConfigPath], {
+            cwd: mediamtxDir,
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        
+        rtspState.serverProcess.stdout.on('data', (data) => {
+            const msg = data.toString();
+            if (msg.includes('listener opened')) {
+                rtspState.serverRunning = true;
+            }
+        });
+        
+        rtspState.serverProcess.stderr.on('data', (data) => {
+            logger.error('[RTSP服务]', data.toString().trim());
+        });
+        
+        rtspState.serverProcess.on('close', (code) => {
+            rtspState.serverRunning = false;
+            rtspState.serverProcess = null;
+            logger.info('[RTSP服务]', `MediaMTX 已停止，退出码: ${code}`);
+        });
+        
+        rtspState.serverProcess.on('error', (err) => {
+            rtspState.serverRunning = false;
+            logger.error('[RTSP服务]', `启动失败: ${err.message}`);
+        });
+        
+        // 等待服务器启动
+        setTimeout(() => {
+            if (rtspState.serverProcess && !rtspState.serverProcess.killed) {
+                rtspState.serverRunning = true;
+                logger.info('[RTSP服务]', `MediaMTX 已启动，端口: ${rtspConfig.rtspPort}`);
+            }
+        }, 1000);
+        
+        res.json({ success: true, message: '服务器启动中...' });
+        
+    } catch (e) {
+        res.json({ success: false, error: e.message });
+    }
+});
+
+/**
+ * 停止MediaMTX服务器
+ */
+app.post('/api/rtsp/server/stop', (req, res) => {
+    if (rtspState.serverProcess) {
+        // 先停止推流
+        stopRtspStream();
+        
+        rtspState.serverProcess.kill('SIGTERM');
+        rtspState.serverProcess = null;
+        rtspState.serverRunning = false;
+        logger.info('[RTSP服务]', 'MediaMTX 已停止');
+    }
+    res.json({ success: true });
+});
+
+/**
+ * 获取服务器状态
+ */
+app.get('/api/rtsp/server/status', (req, res) => {
+    res.json({
+        success: true,
+        running: rtspState.serverRunning
+    });
+});
+
+/**
+ * 停止RTSP推流
+ */
+function stopRtspStream() {
+    if (rtspState.streamProcess) {
+        try {
+            rtspState.streamProcess.kill('SIGKILL');
+        } catch (e) {}
+        rtspState.streamProcess = null;
+    }
+    
+    // 清理暂停时的静帧图片
+    if (rtspState.pauseFramePath && fs.existsSync(rtspState.pauseFramePath)) {
+        try {
+            fs.unlinkSync(rtspState.pauseFramePath);
+        } catch (e) {}
+        rtspState.pauseFramePath = null;
+    }
+    
+    rtspState.isStreaming = false;
+    rtspState.isPaused = false;
+}
+
+/**
+ * 开始推流（内部函数）
+ */
+function startRtspStreamInternal(videoPath, startTime, speed = 1) {
+    return new Promise((resolve, reject) => {
+        const config = getConfig();
+        const rtspConfig = getRtspConfig();
+        const rtspUrl = `rtsp://localhost:${rtspConfig.rtspPort}/${rtspConfig.streamName}`;
+        
+        // 构建 FFmpeg 参数
+        // 注意：-ss 放在 -i 前面可以快速seek但可能不精确，放在后面更精确但慢
+        const ffmpegArgs = [];
+        
+        // 如果有起始时间，放在 -i 前面（快速seek）
+        if (startTime > 0) {
+            ffmpegArgs.push('-ss', formatDuration(startTime));
+        }
+        
+        ffmpegArgs.push('-re'); // 实时推流
+        ffmpegArgs.push('-i', videoPath);
+        
+        // 视频直接复制（速度快）
+        ffmpegArgs.push('-c:v', 'copy');
+        
+        // 音频处理：如果有音频则复制，没有则忽略
+        ffmpegArgs.push('-c:a', 'copy');
+        
+        // RTSP 输出格式
+        ffmpegArgs.push('-f', 'rtsp');
+        ffmpegArgs.push('-rtsp_transport', 'tcp');
+        ffmpegArgs.push(rtspUrl);
+        
+        logger.info('[RTSP推流]', `开始 | ${path.basename(videoPath)} | 从 ${formatDuration(startTime)} 开始`);
+        logger.info('[RTSP推流]', `命令: ffmpeg ${ffmpegArgs.join(' ')}`);
+        
+        const ffmpeg = spawn(config.ffmpegPath, ffmpegArgs);
+        rtspState.streamProcess = ffmpeg;
+        rtspState.isStreaming = true;
+        rtspState.isPaused = false;
+        rtspState.currentVideoPath = videoPath;
+        rtspState.currentTime = startTime;
+        rtspState.startTime = startTime;
+        rtspState.streamStartTimestamp = Date.now();
+        rtspState.speed = speed;
+        
+        let stderrBuffer = '';
+        let hasStarted = false;
+        
+        ffmpeg.stderr.on('data', (data) => {
+            const msg = data.toString();
+            stderrBuffer += msg;
+            
+            // 解析时间进度
+            const timeMatch = msg.match(/time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
+            if (timeMatch) {
+                hasStarted = true;
+                const h = parseInt(timeMatch[1]);
+                const m = parseInt(timeMatch[2]);
+                const s = parseInt(timeMatch[3]);
+                rtspState.currentTime = rtspState.startTime + h * 3600 + m * 60 + s;
+            }
+        });
+        
+        ffmpeg.on('close', (code) => {
+            if (rtspState.streamProcess === ffmpeg) {
+                rtspState.isStreaming = false;
+                rtspState.streamProcess = null;
+                
+                if (code !== 0 && !hasStarted) {
+                    // 推流失败，记录详细错误
+                    const errorLines = stderrBuffer.split('\n').slice(-10).join('\n');
+                    logger.error('[RTSP推流]', `失败 | 退出码: ${code}\n${errorLines}`);
+                } else {
+                    logger.info('[RTSP推流]', `结束 | 退出码: ${code}`);
+                }
+            }
+        });
+        
+        ffmpeg.on('error', (err) => {
+            logger.error('[RTSP推流]', `错误: ${err.message}`);
+            reject(err);
+        });
+        
+        // 等待一段时间检查是否成功启动
+        setTimeout(() => {
+            if (ffmpeg && !ffmpeg.killed && rtspState.isStreaming) {
+                resolve();
+            } else if (!hasStarted) {
+                // 如果还没开始，可能失败了
+                const errorLines = stderrBuffer.split('\n').filter(l => l.includes('Error') || l.includes('error')).join('\n');
+                if (errorLines) {
+                    reject(new Error(errorLines.substring(0, 200)));
+                } else {
+                    resolve(); // 给它更多时间
+                }
+            }
+        }, 800);
+    });
+}
+
+/**
+ * 推送静帧（暂停时使用）
+ */
+function startPauseFrameStream(videoPath, frameTime) {
+    return new Promise(async (resolve, reject) => {
+        const config = getConfig();
+        const rtspConfig = getRtspConfig();
+        const rtspUrl = `rtsp://localhost:${rtspConfig.rtspPort}/${rtspConfig.streamName}`;
+        
+        // 先截取当前帧为图片
+        const pauseFramePath = path.join(TEMP_DIR, `pause_frame_${Date.now()}.jpg`);
+        rtspState.pauseFramePath = pauseFramePath;
+        
+        const captureArgs = [
+            '-ss', formatDuration(frameTime),
+            '-i', videoPath,
+            '-vframes', '1',
+            '-q:v', '2',
+            '-y',
+            pauseFramePath
+        ];
+        
+        // 截取帧
+        await new Promise((res, rej) => {
+            const capture = spawn(config.ffmpegPath, captureArgs);
+            capture.on('close', (code) => {
+                if (code === 0 && fs.existsSync(pauseFramePath)) {
+                    res();
+                } else {
+                    rej(new Error('截取帧失败'));
+                }
+            });
+            capture.on('error', rej);
+        });
+        
+        logger.info('[RTSP推流]', `暂停 | 推送静帧 @ ${formatDuration(frameTime)}`);
+        
+        // 循环推送静帧
+        const ffmpegArgs = [
+            '-re',
+            '-loop', '1',              // 循环
+            '-i', pauseFramePath,
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-tune', 'stillimage',
+            '-pix_fmt', 'yuv420p',
+            '-r', '1',                 // 1fps，减少CPU占用
+            '-f', 'rtsp',
+            '-rtsp_transport', 'tcp',
+            rtspUrl
+        ];
+        
+        const ffmpeg = spawn(config.ffmpegPath, ffmpegArgs);
+        rtspState.streamProcess = ffmpeg;
+        rtspState.isPaused = true;
+        rtspState.isStreaming = true;
+        
+        ffmpeg.on('close', (code) => {
+            if (rtspState.streamProcess === ffmpeg) {
+                rtspState.isStreaming = false;
+                rtspState.isPaused = false;
+                rtspState.streamProcess = null;
+            }
+        });
+        
+        ffmpeg.on('error', (err) => {
+            logger.error('[RTSP推流]', `静帧推送错误: ${err.message}`);
+            reject(err);
+        });
+        
+        setTimeout(() => resolve(), 500);
+    });
+}
+
+/**
+ * 开始推流API
+ */
+app.post('/api/rtsp/stream/start', async (req, res) => {
+    const { videoPath, startTime = 0 } = req.body;
+    
+    if (!videoPath) {
+        res.json({ success: false, error: '请提供视频路径' });
+        return;
+    }
+    
+    if (!fs.existsSync(videoPath)) {
+        res.json({ success: false, error: '视频文件不存在' });
+        return;
+    }
+    
+    if (!rtspState.serverRunning) {
+        res.json({ success: false, error: '请先启动 RTSP 服务器' });
+        return;
+    }
+    
+    // 停止当前推流
+    stopRtspStream();
+    
+    try {
+        await startRtspStreamInternal(videoPath, startTime);
+        
+        const rtspConfig = getRtspConfig();
+        const localIP = getLocalIP();
+        const rtspUrl = `rtsp://${localIP}:${rtspConfig.rtspPort}/${rtspConfig.streamName}`;
+        
+        res.json({
+            success: true,
+            rtspUrl,
+            message: '推流已开始'
+        });
+    } catch (e) {
+        res.json({ success: false, error: e.message });
+    }
+});
+
+/**
+ * 停止推流API
+ */
+app.post('/api/rtsp/stream/stop', (req, res) => {
+    stopRtspStream();
+    logger.info('[RTSP推流]', '推流已停止');
+    res.json({ success: true });
+});
+
+/**
+ * 暂停推流API（切换到静帧模式）
+ */
+app.post('/api/rtsp/stream/pause', async (req, res) => {
+    if (!rtspState.isStreaming || !rtspState.currentVideoPath) {
+        res.json({ success: false, error: '没有正在进行的推流' });
+        return;
+    }
+    
+    if (rtspState.isPaused) {
+        res.json({ success: true, message: '已经处于暂停状态' });
+        return;
+    }
+    
+    const currentTime = rtspState.currentTime;
+    const videoPath = rtspState.currentVideoPath;
+    
+    // 停止当前推流
+    if (rtspState.streamProcess) {
+        rtspState.streamProcess.kill('SIGKILL');
+        rtspState.streamProcess = null;
+    }
+    
+    try {
+        await startPauseFrameStream(videoPath, currentTime);
+        res.json({ success: true, message: '推流已暂停（推送静帧）' });
+    } catch (e) {
+        res.json({ success: false, error: e.message });
+    }
+});
+
+/**
+ * 恢复推流API（从静帧模式切换回视频）
+ */
+app.post('/api/rtsp/stream/resume', async (req, res) => {
+    if (!rtspState.isStreaming || !rtspState.currentVideoPath) {
+        res.json({ success: false, error: '没有正在进行的推流' });
+        return;
+    }
+    
+    if (!rtspState.isPaused) {
+        res.json({ success: true, message: '推流未暂停' });
+        return;
+    }
+    
+    const currentTime = rtspState.currentTime;
+    const videoPath = rtspState.currentVideoPath;
+    
+    // 停止静帧推流
+    stopRtspStream();
+    
+    try {
+        await startRtspStreamInternal(videoPath, currentTime);
+        res.json({ success: true, message: '推流已恢复' });
+    } catch (e) {
+        res.json({ success: false, error: e.message });
+    }
+});
+
+/**
+ * 跳转推流位置API
+ */
+app.post('/api/rtsp/stream/seek', async (req, res) => {
+    const { time } = req.body;
+    
+    if (time === undefined || time < 0) {
+        res.json({ success: false, error: '无效的时间' });
+        return;
+    }
+    
+    if (!rtspState.currentVideoPath) {
+        res.json({ success: false, error: '没有正在进行的推流' });
+        return;
+    }
+    
+    const videoPath = rtspState.currentVideoPath;
+    const wasPaused = rtspState.isPaused;
+    
+    // 停止当前推流
+    stopRtspStream();
+    
+    try {
+        if (wasPaused) {
+            // 如果之前是暂停状态，跳转后继续暂停
+            await startPauseFrameStream(videoPath, time);
+        } else {
+            await startRtspStreamInternal(videoPath, time);
+        }
+        
+        rtspState.currentTime = time;
+        logger.info('[RTSP推流]', `跳转到 ${formatDuration(time)}`);
+        res.json({ success: true, message: `已跳转到 ${formatDuration(time)}` });
+    } catch (e) {
+        res.json({ success: false, error: e.message });
+    }
+});
+
+/**
+ * 获取推流状态API
+ */
+app.get('/api/rtsp/stream/status', (req, res) => {
+    const rtspConfig = getRtspConfig();
+    const localIP = getLocalIP();
+    
+    // 计算实时的当前时间（如果正在推流且未暂停）
+    let currentTime = rtspState.currentTime;
+    if (rtspState.isStreaming && !rtspState.isPaused && rtspState.streamStartTimestamp > 0) {
+        const elapsed = (Date.now() - rtspState.streamStartTimestamp) / 1000;
+        currentTime = rtspState.startTime + elapsed * rtspState.speed;
+    }
+    
+    res.json({
+        success: true,
+        serverRunning: rtspState.serverRunning,
+        isStreaming: rtspState.isStreaming,
+        isPaused: rtspState.isPaused,
+        currentTime: currentTime,
+        videoPath: rtspState.currentVideoPath,
+        rtspUrl: rtspState.serverRunning 
+            ? `rtsp://${localIP}:${rtspConfig.rtspPort}/${rtspConfig.streamName}`
+            : null
+    });
+});
+
+/**
+ * 获取本机IP API
+ */
+app.get('/api/rtsp/local-ip', (req, res) => {
+    res.json({
+        success: true,
+        ip: getLocalIP()
+    });
+});
+
 // ==================== 启动服务 ====================
 
 app.listen(PORT, () => {

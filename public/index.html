@@ -71,6 +71,55 @@
                     </div>
                 </div>
 
+                <!-- RTSP 推流面板 -->
+                <div class="rtsp-panel" id="rtspPanel" style="display: none;">
+                    <div class="rtsp-header">
+                        <h3>📡 RTSP 推流</h3>
+                        <div class="rtsp-status">
+                            <span class="status-dot" id="rtspStatusDot"></span>
+                            <span id="rtspStatusText">未连接</span>
+                        </div>
+                    </div>
+                    
+                    <div class="rtsp-url-section">
+                        <div class="rtsp-url-container">
+                            <input type="text" id="rtspUrl" readonly placeholder="推流地址将在此显示" />
+                            <button class="btn-copy" id="btnCopyRtspUrl" title="复制地址">📋</button>
+                        </div>
+                    </div>
+                    
+                    <div class="rtsp-progress-section">
+                        <div class="rtsp-time-display">
+                            <span id="rtspCurrentTime">00:00:00</span>
+                            <span class="rtsp-time-separator">/</span>
+                            <span id="rtspTotalTime">00:00:00</span>
+                        </div>
+                        <div class="sync-status" id="syncStatus">
+                            <span class="sync-icon">📡</span>
+                            <span class="sync-text">推流独立运行</span>
+                        </div>
+                    </div>
+                    
+                    <div class="rtsp-controls">
+                        <button class="btn-rtsp" id="btnStartStream" title="从当前预览时间开始推流">
+                            <span class="btn-icon">▶</span>
+                            <span class="btn-text">开始推流</span>
+                        </button>
+                        <button class="btn-rtsp" id="btnSyncStream" title="同步到当前预览时间（会重启推流）" disabled>
+                            <span class="btn-icon">🔄</span>
+                            <span class="btn-text">同步时间</span>
+                        </button>
+                        <button class="btn-rtsp btn-stop" id="btnStopStream" title="停止推流" disabled>
+                            <span class="btn-icon">⏹</span>
+                            <span class="btn-text">停止</span>
+                        </button>
+                    </div>
+                    
+                    <div class="rtsp-hint">
+                        <small>💡 推流与预览独立运行，不会自动同步。点击"同步时间"可将推流跳转到当前预览位置。</small>
+                    </div>
+                </div>
+
                 <!-- 时间轴控制 -->
                 <div class="timeline-panel" id="timelinePanel" style="display: none;">
                     <h3>⏱️ 剪辑范围</h3>
@@ -176,6 +225,34 @@
                     <div class="form-group">
                         <button id="btnTestFfmpeg" class="btn-secondary">测试 FFmpeg</button>
                         <span id="ffmpegTestResult"></span>
+                    </div>
+                    
+                    <div class="settings-divider">
+                        <span>RTSP 推流设置</span>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>MediaMTX 路径（可选，用于 RTSP 推流）</label>
+                        <div class="input-with-browse">
+                            <input type="text" id="settingMediamtxPath" placeholder="点击浏览选择 mediamtx.exe" readonly />
+                            <button class="btn-browse" id="btnBrowseMediamtx">浏览...</button>
+                        </div>
+                    </div>
+                    <div class="form-group form-group-inline">
+                        <div class="form-group-item">
+                            <label>RTSP 端口</label>
+                            <input type="number" id="settingRtspPort" value="8554" min="1" max="65535" />
+                        </div>
+                        <div class="form-group-item">
+                            <label>推流路径名</label>
+                            <input type="text" id="settingStreamName" value="live" placeholder="live" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>推流地址预览</label>
+                        <div class="rtsp-url-preview">
+                            <span id="rtspUrlPreview">rtsp://192.168.1.x:8554/live</span>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
