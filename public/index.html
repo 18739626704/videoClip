@@ -88,6 +88,39 @@
                         </div>
                     </div>
                     
+                    <!-- 推流选项 -->
+                    <div class="rtsp-options">
+                        <div class="rtsp-option-row">
+                            <label class="rtsp-option-label">倍速</label>
+                            <select id="rtspSpeed" class="rtsp-select">
+                                <option value="0.5">0.5x</option>
+                                <option value="0.75">0.75x</option>
+                                <option value="1" selected>1x (原速)</option>
+                                <option value="1.25">1.25x</option>
+                                <option value="1.5">1.5x</option>
+                                <option value="2">2x</option>
+                                <option value="4">4x</option>
+                            </select>
+                            <span class="rtsp-option-hint" id="speedHint"></span>
+                        </div>
+                        <div class="rtsp-option-row">
+                            <label class="rtsp-option-label">推流区间</label>
+                            <label class="rtsp-checkbox">
+                                <input type="checkbox" id="rtspUseRange">
+                                <span>使用剪辑范围</span>
+                            </label>
+                            <span class="rtsp-range-display" id="rtspRangeDisplay"></span>
+                        </div>
+                        <div class="rtsp-option-row">
+                            <label class="rtsp-option-label">循环推流</label>
+                            <label class="rtsp-checkbox">
+                                <input type="checkbox" id="rtspLoop">
+                                <span>视频结束后自动重播</span>
+                            </label>
+                            <span class="rtsp-loop-count" id="rtspLoopCount"></span>
+                        </div>
+                    </div>
+                    
                     <div class="rtsp-progress-section">
                         <div class="rtsp-time-display">
                             <span id="rtspCurrentTime">00:00:00</span>
@@ -97,6 +130,34 @@
                         <div class="sync-status" id="syncStatus">
                             <span class="sync-icon">📡</span>
                             <span class="sync-text">推流独立运行</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 推流状态监控 -->
+                    <div class="rtsp-stats" id="rtspStats" style="display: none;">
+                        <div class="rtsp-stat-item">
+                            <span class="stat-label">帧率</span>
+                            <span class="stat-value" id="statFps">0 fps</span>
+                        </div>
+                        <div class="rtsp-stat-item">
+                            <span class="stat-label">码率</span>
+                            <span class="stat-value" id="statBitrate">0 kbps</span>
+                        </div>
+                        <div class="rtsp-stat-item">
+                            <span class="stat-label">已推送</span>
+                            <span class="stat-value" id="statFrames">0 帧</span>
+                        </div>
+                        <div class="rtsp-stat-item">
+                            <span class="stat-label">丢帧</span>
+                            <span class="stat-value" id="statDropped">0</span>
+                        </div>
+                        <div class="rtsp-stat-item">
+                            <span class="stat-label">设定倍速</span>
+                            <span class="stat-value" id="statSpeed">1x</span>
+                        </div>
+                        <div class="rtsp-stat-item">
+                            <span class="stat-label">数据量</span>
+                            <span class="stat-value" id="statSize">0 MB</span>
                         </div>
                     </div>
                     
@@ -116,7 +177,7 @@
                     </div>
                     
                     <div class="rtsp-hint">
-                        <small>💡 推流与预览独立运行，不会自动同步。点击"同步时间"可将推流跳转到当前预览位置。</small>
+                        <small>💡 推流与预览独立运行。非1x倍速需要重新编码，CPU占用较高。</small>
                     </div>
                 </div>
 

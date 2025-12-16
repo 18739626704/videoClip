@@ -658,11 +658,12 @@ function remuxAndReplace(videoPath) {
         
         const startTime = Date.now();
         
+        // 移除 -movflags +faststart 以提高批量转换速度
+        // faststart 会在转换后重新排列文件结构，对批量处理造成额外开销
         const ffmpegArgs = [
             '-i', videoPath,
             '-c', 'copy',
             '-f', 'mp4',
-            '-movflags', '+faststart',
             '-y',
             tempPath
         ];
@@ -1217,10 +1218,22 @@ const rtspState = {
     currentVideoPath: null,   // 当前推流的视频路径
     currentTime: 0,           // 当前推流时间（秒）
     startTime: 0,             // 推流开始时间点
+    endTime: 0,               // 推流结束时间点（0表示到视频结尾）
     duration: 0,              // 视频总时长
     speed: 1,                 // 推流速度
+    loop: false,              // 是否循环推流
+    loopCount: 0,             // 已循环次数
     streamStartTimestamp: 0,  // 推流开始的时间戳（用于计算当前时间）
-    pauseFramePath: null      // 暂停时的静帧图片路径
+    pauseFramePath: null,     // 暂停时的静帧图片路径
+    // 推流状态监控
+    stats: {
+        fps: 0,               // 当前帧率
+        bitrate: 0,           // 当前码率 (kbps)
+        frames: 0,            // 已推送帧数
+        droppedFrames: 0,     // 丢帧数
+        speed: '1x',          // 实际推流速度
+        size: 0               // 已推送数据量 (bytes)
+    }
 };
 
 /**
@@ -1432,15 +1445,19 @@ function stopRtspStream() {
 
 /**
  * 开始推流（内部函数）
+ * @param {string} videoPath - 视频文件路径
+ * @param {number} startTime - 开始时间（秒）
+ * @param {object} options - 选项 { speed, endTime, loop }
  */
-function startRtspStreamInternal(videoPath, startTime, speed = 1) {
+function startRtspStreamInternal(videoPath, startTime, options = {}) {
+    const { speed = 1, endTime = 0, loop = false } = options;
+    
     return new Promise((resolve, reject) => {
         const config = getConfig();
         const rtspConfig = getRtspConfig();
         const rtspUrl = `rtsp://localhost:${rtspConfig.rtspPort}/${rtspConfig.streamName}`;
         
         // 构建 FFmpeg 参数
-        // 注意：-ss 放在 -i 前面可以快速seek但可能不精确，放在后面更精确但慢
         const ffmpegArgs = [];
         
         // 如果有起始时间，放在 -i 前面（快速seek）
@@ -1448,21 +1465,81 @@ function startRtspStreamInternal(videoPath, startTime, speed = 1) {
             ffmpegArgs.push('-ss', formatDuration(startTime));
         }
         
-        ffmpegArgs.push('-re'); // 实时推流
+        // 循环推流：使用 -stream_loop
+        if (loop) {
+            ffmpegArgs.push('-stream_loop', '-1'); // -1 表示无限循环
+        }
+        
+        // 1x 速度使用 -re 实时推流
+        // 非1x 速度不使用 -re，而是通过 realtime 滤镜控制输出速度
+        if (speed === 1) {
+            ffmpegArgs.push('-re');
+        }
+        
         ffmpegArgs.push('-i', videoPath);
         
-        // 视频直接复制（速度快）
-        ffmpegArgs.push('-c:v', 'copy');
+        // 如果有结束时间，计算持续时长
+        if (endTime > 0 && endTime > startTime) {
+            const duration = endTime - startTime;
+            ffmpegArgs.push('-t', formatDuration(duration));
+        }
         
-        // 音频处理：如果有音频则复制，没有则忽略
-        ffmpegArgs.push('-c:a', 'copy');
+        // 根据速度选择编码方式
+        if (speed === 1) {
+            // 1x 速度：直接复制（快速，低CPU）
+            ffmpegArgs.push('-c:v', 'copy');
+            ffmpegArgs.push('-c:a', 'copy');
+        } else {
+            // 非1x速度：需要使用滤镜重新编码
+            // 视频滤镜链：
+            // 1. setpts=PTS/speed - 改变时间戳实现变速
+            // 2. fps=24 - 限制输出帧率为24fps（避免帧率过高）
+            // 3. realtime - 限制输出速度为实时（关键：防止推流过快导致丢帧）
+            const targetFps = 24;
+            const videoFilter = `setpts=PTS/${speed},fps=${targetFps},realtime`;
+            ffmpegArgs.push('-filter:v', videoFilter);
+            
+            // 编码设置：平衡画质和性能
+            ffmpegArgs.push('-c:v', 'libx264');
+            ffmpegArgs.push('-preset', 'veryfast');  // 改用 veryfast，画质更好
+            ffmpegArgs.push('-tune', 'zerolatency');
+            ffmpegArgs.push('-g', '48');             // GOP大小（2秒@24fps）
+            ffmpegArgs.push('-crf', '23');           // 使用 CRF 质量控制（23是默认，越小质量越高）
+            
+            // 码率控制：提高码率以保持画质
+            ffmpegArgs.push('-maxrate', '5M');       // 最大码率 5Mbps
+            ffmpegArgs.push('-bufsize', '2M');       // 缓冲区大小
+            
+            // 音频滤镜：atempo（范围0.5-2.0，超出需要链式调用）
+            // 音频会跟随视频的 realtime 滤镜同步
+            let audioFilter;
+            if (speed >= 0.5 && speed <= 2.0) {
+                audioFilter = `atempo=${speed}`;
+            } else if (speed > 2.0) {
+                // 超过2倍需要链式 atempo
+                const atempo1 = Math.min(speed, 2.0);
+                const atempo2 = speed / atempo1;
+                audioFilter = `atempo=${atempo1},atempo=${atempo2}`;
+            } else {
+                // 小于0.5倍
+                const atempo1 = Math.max(speed, 0.5);
+                const atempo2 = speed / atempo1;
+                audioFilter = `atempo=${atempo1},atempo=${atempo2}`;
+            }
+            ffmpegArgs.push('-filter:a', audioFilter);
+            ffmpegArgs.push('-c:a', 'aac');
+            ffmpegArgs.push('-b:a', '128k');         // 音频码率
+        }
         
         // RTSP 输出格式
         ffmpegArgs.push('-f', 'rtsp');
         ffmpegArgs.push('-rtsp_transport', 'tcp');
         ffmpegArgs.push(rtspUrl);
         
-        logger.info('[RTSP推流]', `开始 | ${path.basename(videoPath)} | 从 ${formatDuration(startTime)} 开始`);
+        const speedStr = speed === 1 ? '1x' : `${speed}x`;
+        const rangeStr = endTime > 0 ? ` -> ${formatDuration(endTime)}` : '';
+        const loopStr = loop ? ' [循环]' : '';
+        logger.info('[RTSP推流]', `开始 | ${path.basename(videoPath)} | ${formatDuration(startTime)}${rangeStr} | ${speedStr}${loopStr}`);
         logger.info('[RTSP推流]', `命令: ffmpeg ${ffmpegArgs.join(' ')}`);
         
         const ffmpeg = spawn(config.ffmpegPath, ffmpegArgs);
@@ -1472,8 +1549,13 @@ function startRtspStreamInternal(videoPath, startTime, speed = 1) {
         rtspState.currentVideoPath = videoPath;
         rtspState.currentTime = startTime;
         rtspState.startTime = startTime;
+        rtspState.endTime = endTime;
         rtspState.streamStartTimestamp = Date.now();
         rtspState.speed = speed;
+        rtspState.loop = loop;
+        rtspState.loopCount = 0;
+        // 重置统计信息
+        rtspState.stats = { fps: 0, bitrate: 0, frames: 0, droppedFrames: 0, speed: '0x', size: 0 };
         
         let stderrBuffer = '';
         let hasStarted = false;
@@ -1482,28 +1564,72 @@ function startRtspStreamInternal(videoPath, startTime, speed = 1) {
             const msg = data.toString();
             stderrBuffer += msg;
             
-            // 解析时间进度
+            // 解析时间进度: time=00:01:23.45
             const timeMatch = msg.match(/time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
             if (timeMatch) {
                 hasStarted = true;
                 const h = parseInt(timeMatch[1]);
                 const m = parseInt(timeMatch[2]);
                 const s = parseInt(timeMatch[3]);
-                rtspState.currentTime = rtspState.startTime + h * 3600 + m * 60 + s;
+                const progressTime = h * 3600 + m * 60 + s;
+                rtspState.currentTime = rtspState.startTime + progressTime;
+            }
+            
+            // 解析帧率: fps= 24
+            const fpsMatch = msg.match(/fps=\s*(\d+(?:\.\d+)?)/);
+            if (fpsMatch) {
+                rtspState.stats.fps = parseFloat(fpsMatch[1]);
+            }
+            
+            // 解析码率: bitrate= 3205.3kbits/s
+            const bitrateMatch = msg.match(/bitrate=\s*(\d+(?:\.\d+)?)\s*kbits/);
+            if (bitrateMatch) {
+                rtspState.stats.bitrate = parseFloat(bitrateMatch[1]);
+            }
+            
+            // 解析帧数: frame= 1234
+            const frameMatch = msg.match(/frame=\s*(\d+)/);
+            if (frameMatch) {
+                rtspState.stats.frames = parseInt(frameMatch[1]);
+            }
+            
+            // 解析丢帧: drop= 0
+            const dropMatch = msg.match(/drop=\s*(\d+)/);
+            if (dropMatch) {
+                rtspState.stats.droppedFrames = parseInt(dropMatch[1]);
+            }
+            
+            // 解析推流速度: speed= 1.0x
+            const speedMatch = msg.match(/speed=\s*(\d+(?:\.\d+)?x)/);
+            if (speedMatch) {
+                rtspState.stats.speed = speedMatch[1];
+            }
+            
+            // 解析已推送大小: size= 12345kB
+            const sizeMatch = msg.match(/size=\s*(\d+)\s*kB/);
+            if (sizeMatch) {
+                rtspState.stats.size = parseInt(sizeMatch[1]) * 1024;
             }
         });
         
         ffmpeg.on('close', (code) => {
             if (rtspState.streamProcess === ffmpeg) {
+                // 检查是否是循环推流且正常结束
+                if (loop && code === 0 && rtspState.isStreaming) {
+                    rtspState.loopCount++;
+                    logger.info('[RTSP推流]', `循环 | 第 ${rtspState.loopCount} 次循环结束，继续推流...`);
+                    // 循环由 FFmpeg -stream_loop 自动处理
+                    return;
+                }
+                
                 rtspState.isStreaming = false;
                 rtspState.streamProcess = null;
                 
                 if (code !== 0 && !hasStarted) {
-                    // 推流失败，记录详细错误
                     const errorLines = stderrBuffer.split('\n').slice(-10).join('\n');
                     logger.error('[RTSP推流]', `失败 | 退出码: ${code}\n${errorLines}`);
                 } else {
-                    logger.info('[RTSP推流]', `结束 | 退出码: ${code}`);
+                    logger.info('[RTSP推流]', `结束 | 退出码: ${code} | 已推送 ${rtspState.stats.frames} 帧`);
                 }
             }
         });
@@ -1518,12 +1644,11 @@ function startRtspStreamInternal(videoPath, startTime, speed = 1) {
             if (ffmpeg && !ffmpeg.killed && rtspState.isStreaming) {
                 resolve();
             } else if (!hasStarted) {
-                // 如果还没开始，可能失败了
                 const errorLines = stderrBuffer.split('\n').filter(l => l.includes('Error') || l.includes('error')).join('\n');
                 if (errorLines) {
                     reject(new Error(errorLines.substring(0, 200)));
                 } else {
-                    resolve(); // 给它更多时间
+                    resolve();
                 }
             }
         }, 800);
@@ -1608,7 +1733,7 @@ function startPauseFrameStream(videoPath, frameTime) {
  * 开始推流API
  */
 app.post('/api/rtsp/stream/start', async (req, res) => {
-    const { videoPath, startTime = 0 } = req.body;
+    const { videoPath, startTime = 0, endTime = 0, speed = 1, loop = false } = req.body;
     
     if (!videoPath) {
         res.json({ success: false, error: '请提供视频路径' });
@@ -1625,11 +1750,18 @@ app.post('/api/rtsp/stream/start', async (req, res) => {
         return;
     }
     
+    // 验证速度参数
+    const validSpeeds = [0.5, 0.75, 1, 1.25, 1.5, 2, 4];
+    if (!validSpeeds.includes(speed)) {
+        res.json({ success: false, error: `不支持的速度: ${speed}x，支持: ${validSpeeds.join(', ')}` });
+        return;
+    }
+    
     // 停止当前推流
     stopRtspStream();
     
     try {
-        await startRtspStreamInternal(videoPath, startTime);
+        await startRtspStreamInternal(videoPath, startTime, { speed, endTime, loop });
         
         const rtspConfig = getRtspConfig();
         const localIP = getLocalIP();
@@ -1638,7 +1770,8 @@ app.post('/api/rtsp/stream/start', async (req, res) => {
         res.json({
             success: true,
             rtspUrl,
-            message: '推流已开始'
+            message: '推流已开始',
+            options: { speed, endTime, loop }
         });
     } catch (e) {
         res.json({ success: false, error: e.message });
@@ -1702,11 +1835,18 @@ app.post('/api/rtsp/stream/resume', async (req, res) => {
     const currentTime = rtspState.currentTime;
     const videoPath = rtspState.currentVideoPath;
     
+    // 保留之前的推流设置
+    const previousOptions = {
+        speed: rtspState.speed,
+        endTime: rtspState.endTime,
+        loop: rtspState.loop
+    };
+    
     // 停止静帧推流
     stopRtspStream();
     
     try {
-        await startRtspStreamInternal(videoPath, currentTime);
+        await startRtspStreamInternal(videoPath, currentTime, previousOptions);
         res.json({ success: true, message: '推流已恢复' });
     } catch (e) {
         res.json({ success: false, error: e.message });
@@ -1714,7 +1854,7 @@ app.post('/api/rtsp/stream/resume', async (req, res) => {
 });
 
 /**
- * 跳转推流位置API
+ * 跳转推流位置API（保留之前的推流设置）
  */
 app.post('/api/rtsp/stream/seek', async (req, res) => {
     const { time } = req.body;
@@ -1731,6 +1871,12 @@ app.post('/api/rtsp/stream/seek', async (req, res) => {
     
     const videoPath = rtspState.currentVideoPath;
     const wasPaused = rtspState.isPaused;
+    // 保留之前的推流设置
+    const previousOptions = {
+        speed: rtspState.speed,
+        endTime: rtspState.endTime,
+        loop: rtspState.loop
+    };
     
     // 停止当前推流
     stopRtspStream();
@@ -1740,7 +1886,8 @@ app.post('/api/rtsp/stream/seek', async (req, res) => {
             // 如果之前是暂停状态，跳转后继续暂停
             await startPauseFrameStream(videoPath, time);
         } else {
-            await startRtspStreamInternal(videoPath, time);
+            // 使用保留的设置
+            await startRtspStreamInternal(videoPath, time, previousOptions);
         }
         
         rtspState.currentTime = time;
@@ -1752,7 +1899,7 @@ app.post('/api/rtsp/stream/seek', async (req, res) => {
 });
 
 /**
- * 获取推流状态API
+ * 获取推流状态API（包含详细监控信息）
  */
 app.get('/api/rtsp/stream/status', (req, res) => {
     const rtspConfig = getRtspConfig();
@@ -1771,10 +1918,20 @@ app.get('/api/rtsp/stream/status', (req, res) => {
         isStreaming: rtspState.isStreaming,
         isPaused: rtspState.isPaused,
         currentTime: currentTime,
+        startTime: rtspState.startTime,
+        endTime: rtspState.endTime,
         videoPath: rtspState.currentVideoPath,
         rtspUrl: rtspState.serverRunning 
             ? `rtsp://${localIP}:${rtspConfig.rtspPort}/${rtspConfig.streamName}`
-            : null
+            : null,
+        // 推流选项
+        options: {
+            speed: rtspState.speed,
+            loop: rtspState.loop,
+            loopCount: rtspState.loopCount
+        },
+        // 实时统计信息
+        stats: rtspState.stats
     });
 });
 

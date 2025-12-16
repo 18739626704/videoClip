@@ -202,6 +202,23 @@ const DOM = {
     btnSyncStream: document.getElementById('btnSyncStream'),
     btnStopStream: document.getElementById('btnStopStream'),
     
+    // RTSP 推流选项
+    rtspSpeed: document.getElementById('rtspSpeed'),
+    rtspUseRange: document.getElementById('rtspUseRange'),
+    rtspRangeDisplay: document.getElementById('rtspRangeDisplay'),
+    rtspLoop: document.getElementById('rtspLoop'),
+    rtspLoopCount: document.getElementById('rtspLoopCount'),
+    speedHint: document.getElementById('speedHint'),
+    
+    // RTSP 状态监控
+    rtspStats: document.getElementById('rtspStats'),
+    statFps: document.getElementById('statFps'),
+    statBitrate: document.getElementById('statBitrate'),
+    statFrames: document.getElementById('statFrames'),
+    statDropped: document.getElementById('statDropped'),
+    statSpeed: document.getElementById('statSpeed'),
+    statSize: document.getElementById('statSize'),
+    
     // RTSP 设置
     settingMediamtxPath: document.getElementById('settingMediamtxPath'),
     btnBrowseMediamtx: document.getElementById('btnBrowseMediamtx'),
@@ -619,6 +636,9 @@ function updateTimeline() {
         DOM.clipDuration.textContent = formatTime(duration);
         DOM.clipDuration.style.color = 'var(--primary)';
     }
+    
+    // 同步更新 RTSP 推流区间显示
+    updateRtspRangeDisplay();
 }
 
 /**
@@ -950,16 +970,35 @@ async function startRtspStream() {
         await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
-    // 从当前播放位置开始推流
-    const startTime = state.videoSupported ? DOM.videoPlayer.currentTime : 0;
+    // 获取推流选项
+    const speed = DOM.rtspSpeed ? parseFloat(DOM.rtspSpeed.value) : 1;
+    const useRange = DOM.rtspUseRange ? DOM.rtspUseRange.checked : false;
+    const loop = DOM.rtspLoop ? DOM.rtspLoop.checked : false;
     
-    showResult('🔄 正在启动推流...', 'info');
+    // 确定开始时间和结束时间
+    let startTime, endTime = 0;
+    if (useRange) {
+        // 使用剪辑范围
+        startTime = state.startTime || 0;
+        endTime = state.endTime || 0;
+    } else {
+        // 从当前播放位置开始
+        startTime = state.videoSupported ? DOM.videoPlayer.currentTime : 0;
+    }
+    
+    // 显示推流信息
+    const speedStr = speed !== 1 ? ` (${speed}x)` : '';
+    const loopStr = loop ? ' [循环]' : '';
+    showResult(`🔄 正在启动推流...${speedStr}${loopStr}`, 'info');
     
     const result = await api('/api/rtsp/stream/start', {
         method: 'POST',
         body: {
             videoPath: state.activeVideo.path,
-            startTime: startTime
+            startTime: startTime,
+            endTime: endTime,
+            speed: speed,
+            loop: loop
         }
     });
     
@@ -967,6 +1006,8 @@ async function startRtspStream() {
         state.rtsp.isStreaming = true;
         state.rtsp.rtspUrl = result.rtspUrl;
         state.rtsp.currentTime = startTime;
+        state.rtsp.speed = speed;
+        state.rtsp.loop = loop;
         
         if (DOM.rtspUrl) DOM.rtspUrl.value = result.rtspUrl;
         
@@ -975,11 +1016,15 @@ async function startRtspStream() {
             DOM.videoPlayer.play();
         }
         
+        // 显示状态监控面板
+        if (DOM.rtspStats) DOM.rtspStats.style.display = 'grid';
+        
         // 开始轮询状态
         startRtspStatusPolling();
         updateRtspUI();
         
-        showResult(`✅ 推流已开始<br>地址: <code>${result.rtspUrl}</code><br><small>可用 VLC 或 PotPlayer 打开此地址</small>`, 'success');
+        const rangeInfo = useRange ? `<br>区间: ${formatTime(startTime)} -> ${formatTime(endTime)}` : '';
+        showResult(`✅ 推流已开始${speedStr}${loopStr}<br>地址: <code>${result.rtspUrl}</code>${rangeInfo}<br><small>可用 VLC 或 PotPlayer 打开</small>`, 'success');
     } else {
         state.rtsp.isStreaming = false;
         updateRtspUI();
@@ -988,7 +1033,7 @@ async function startRtspStream() {
 }
 
 /**
- * 同步推流到当前预览时间（会重启FFmpeg）
+ * 同步推流到当前预览时间（会重启FFmpeg，但保留速度、循环等选项）
  */
 async function syncRtspToCurrentTime() {
     if (!state.rtsp.isStreaming || !state.activeVideo) {
@@ -998,14 +1043,20 @@ async function syncRtspToCurrentTime() {
     
     const currentTime = state.videoSupported ? DOM.videoPlayer.currentTime : 0;
     
+    // 获取当前的推流选项（保留之前的设置）
+    const speed = DOM.rtspSpeed ? parseFloat(DOM.rtspSpeed.value) : (state.rtsp.speed || 1);
+    const loop = DOM.rtspLoop ? DOM.rtspLoop.checked : (state.rtsp.loop || false);
+    
     showResult('🔄 正在同步推流时间...', 'info');
     
-    // 重新开始推流到当前时间点
+    // 重新开始推流到当前时间点，保留速度和循环设置
     const result = await api('/api/rtsp/stream/start', {
         method: 'POST',
         body: {
             videoPath: state.activeVideo.path,
-            startTime: currentTime
+            startTime: currentTime,
+            speed: speed,
+            loop: loop
         }
     });
     
@@ -1025,7 +1076,29 @@ async function stopRtspStream() {
     await api('/api/rtsp/stream/stop', { method: 'POST' });
     state.rtsp.isStreaming = false;
     state.rtsp.isPaused = false;
+    state.rtsp.loopCount = 0;
+    
+    // 隐藏统计面板
+    if (DOM.rtspStats) DOM.rtspStats.style.display = 'none';
+    // 清空循环计数
+    if (DOM.rtspLoopCount) DOM.rtspLoopCount.textContent = '';
+    
     updateRtspUI();
+}
+
+/**
+ * 更新推流区间显示
+ */
+function updateRtspRangeDisplay() {
+    if (!DOM.rtspRangeDisplay) return;
+    
+    if (DOM.rtspUseRange && DOM.rtspUseRange.checked) {
+        const start = formatTime(state.startTime || 0);
+        const end = formatTime(state.endTime || state.duration || 0);
+        DOM.rtspRangeDisplay.textContent = `${start} → ${end}`;
+    } else {
+        DOM.rtspRangeDisplay.textContent = '';
+    }
 }
 
 /**
@@ -1042,8 +1115,27 @@ function startRtspStatusPolling() {
             state.rtsp.isPaused = result.isPaused;
             state.rtsp.currentTime = result.currentTime;
             
+            // 更新推流选项状态
+            if (result.options) {
+                state.rtsp.speed = result.options.speed;
+                state.rtsp.loop = result.options.loop;
+                state.rtsp.loopCount = result.options.loopCount;
+            }
+            
             if (result.rtspUrl && DOM.rtspUrl) {
                 DOM.rtspUrl.value = result.rtspUrl;
+            }
+            
+            // 更新统计信息
+            if (result.stats && result.isStreaming) {
+                updateRtspStats(result.stats);
+            }
+            
+            // 更新循环计数
+            if (DOM.rtspLoopCount && result.options && result.options.loop) {
+                DOM.rtspLoopCount.textContent = result.options.loopCount > 0 
+                    ? `已循环 ${result.options.loopCount} 次` 
+                    : '';
             }
             
             updateRtspUI();
@@ -1051,9 +1143,46 @@ function startRtspStatusPolling() {
             // 如果推流已结束，停止轮询
             if (!result.isStreaming && !result.serverRunning) {
                 stopRtspStatusPolling();
+                // 隐藏统计面板
+                if (DOM.rtspStats) DOM.rtspStats.style.display = 'none';
             }
         }
     }, 1000);
+}
+
+/**
+ * 更新推流统计信息显示
+ */
+function updateRtspStats(stats) {
+    if (DOM.statFps) {
+        DOM.statFps.textContent = `${stats.fps.toFixed(1)} fps`;
+    }
+    if (DOM.statBitrate) {
+        DOM.statBitrate.textContent = stats.bitrate > 1000 
+            ? `${(stats.bitrate / 1000).toFixed(1)} Mbps`
+            : `${stats.bitrate.toFixed(0)} kbps`;
+    }
+    if (DOM.statFrames) {
+        DOM.statFrames.textContent = stats.frames > 1000 
+            ? `${(stats.frames / 1000).toFixed(1)}k 帧`
+            : `${stats.frames} 帧`;
+    }
+    if (DOM.statDropped) {
+        DOM.statDropped.textContent = stats.droppedFrames.toString();
+        // 丢帧超过10帧显示警告颜色
+        DOM.statDropped.classList.toggle('warning', stats.droppedFrames > 10);
+    }
+    if (DOM.statSpeed) {
+        // 显示用户设定的倍速，而不是FFmpeg报告的实际处理速度
+        // 因为使用 realtime 滤镜后，FFmpeg报告的速度总是约1x
+        DOM.statSpeed.textContent = `${state.rtsp.speed || 1}x`;
+    }
+    if (DOM.statSize) {
+        const sizeMB = stats.size / (1024 * 1024);
+        DOM.statSize.textContent = sizeMB > 1000 
+            ? `${(sizeMB / 1024).toFixed(2)} GB`
+            : `${sizeMB.toFixed(1)} MB`;
+    }
 }
 
 /**
@@ -1603,6 +1732,28 @@ function bindEvents() {
     
     if (DOM.btnCopyRtspUrl) {
         DOM.btnCopyRtspUrl.addEventListener('click', copyRtspUrl);
+    }
+    
+    // RTSP 推流选项
+    if (DOM.rtspSpeed) {
+        DOM.rtspSpeed.addEventListener('change', () => {
+            const speed = parseFloat(DOM.rtspSpeed.value);
+            if (DOM.speedHint) {
+                if (speed !== 1) {
+                    DOM.speedHint.textContent = '需重新编码';
+                    DOM.speedHint.classList.add('warning');
+                } else {
+                    DOM.speedHint.textContent = '';
+                    DOM.speedHint.classList.remove('warning');
+                }
+            }
+        });
+    }
+    
+    if (DOM.rtspUseRange) {
+        DOM.rtspUseRange.addEventListener('change', () => {
+            updateRtspRangeDisplay();
+        });
     }
     
     // RTSP 设置 - MediaMTX 路径选择

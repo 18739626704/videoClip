@@ -9,6 +9,8 @@ config.json
 
 # 日志文件和目录
 logs/
+.cursor/
+output/
 *.log
 npm-debug.log*
 

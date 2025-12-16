@@ -1212,6 +1212,126 @@ body {
     color: #000;
 }
 
+/* RTSP 推流选项 */
+.rtsp-options {
+    margin-bottom: 14px;
+    padding: 12px;
+    background: var(--bg-dark);
+    border-radius: var(--border-radius);
+}
+
+.rtsp-option-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+}
+
+.rtsp-option-row:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+    margin-bottom: 4px;
+}
+
+.rtsp-option-label {
+    min-width: 65px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.rtsp-select {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 6px 10px;
+    color: var(--text-primary);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.rtsp-select:hover {
+    border-color: var(--primary);
+}
+
+.rtsp-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.rtsp-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+.rtsp-option-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: auto;
+}
+
+.rtsp-option-hint.warning {
+    color: var(--warning);
+}
+
+.rtsp-range-display {
+    font-size: 12px;
+    color: var(--accent);
+    margin-left: auto;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.rtsp-loop-count {
+    font-size: 12px;
+    color: var(--success);
+    margin-left: auto;
+}
+
+/* RTSP 状态监控 */
+.rtsp-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+    padding: 10px;
+    background: var(--bg-dark);
+    border-radius: var(--border-radius);
+    border: 1px solid var(--border);
+}
+
+.rtsp-stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.rtsp-stat-item .stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.rtsp-stat-item .stat-value {
+    font-size: 13px;
+    color: var(--primary);
+    font-weight: 600;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.rtsp-stat-item .stat-value.warning {
+    color: var(--warning);
+}
+
+.rtsp-stat-item .stat-value.error {
+    color: var(--error);
+}
+
 .rtsp-hint {
     padding-top: 10px;
     border-top: 1px solid var(--border);
