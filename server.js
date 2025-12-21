@@ -1168,6 +1168,119 @@ app.post('/api/clip', (req, res) => {
 });
 
 /**
+ * 合并视频
+ */
+app.post('/api/merge', async (req, res) => {
+    const { videos, outputName } = req.body;
+    
+    if (!videos || !Array.isArray(videos) || videos.length < 2) {
+        res.json({ success: false, error: '至少需要2个视频进行合并' });
+        return;
+    }
+    
+    // 检查所有视频文件是否存在
+    for (const videoPath of videos) {
+        if (!fs.existsSync(videoPath)) {
+            res.json({ success: false, error: `文件不存在: ${videoPath}` });
+            return;
+        }
+    }
+    
+    const config = getConfig();
+    const outputDir = ensureOutputDir();
+    
+    // 生成输出文件名
+    const ext = path.extname(videos[0]);
+    const baseName = outputName || `merged_${Date.now()}`;
+    const outputPath = path.join(outputDir, `${baseName}${ext}`);
+    
+    // 创建临时的文件列表
+    const tempListPath = path.join(__dirname, 'temp', `merge_list_${Date.now()}.txt`);
+    
+    // 确保 temp 目录存在
+    const tempDir = path.join(__dirname, 'temp');
+    if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    // 写入文件列表（FFmpeg concat demuxer 格式）
+    const fileListContent = videos.map(v => `file '${v.replace(/\\/g, '/')}'`).join('\n');
+    fs.writeFileSync(tempListPath, fileListContent, 'utf8');
+    
+    logger.info('[合并]', `开始 | ${videos.length}个视频 | 输出: ${path.basename(outputPath)}`);
+    videos.forEach((v, i) => {
+        logger.info('[合并]', `  ${i + 1}. ${path.basename(v)}`);
+    });
+    
+    const mergeStartTime = Date.now();
+    
+    // 使用 concat demuxer 合并视频
+    const ffmpegArgs = [
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', tempListPath,
+        '-c', 'copy',
+        '-y', outputPath
+    ];
+    
+    const ffmpeg = spawn(config.ffmpegPath, ffmpegArgs);
+    
+    let stderr = '';
+    
+    ffmpeg.stderr.on('data', (data) => {
+        stderr += data.toString();
+    });
+    
+    ffmpeg.on('close', (code) => {
+        // 删除临时文件
+        try {
+            fs.unlinkSync(tempListPath);
+        } catch (e) {
+            // 忽略删除失败
+        }
+        
+        const elapsed = ((Date.now() - mergeStartTime) / 1000).toFixed(2);
+        
+        if (code === 0) {
+            // 获取输出文件大小
+            let fileSizeStr = '';
+            try {
+                const stats = fs.statSync(outputPath);
+                const fileSizeGB = (stats.size / (1024 * 1024 * 1024)).toFixed(2);
+                fileSizeStr = ` | ${fileSizeGB} GB`;
+            } catch (e) {}
+            
+            logger.info('[合并]', `完成 | ${videos.length}个视频 -> ${path.basename(outputPath)} | 耗时 ${elapsed}秒${fileSizeStr}`);
+            res.json({ 
+                success: true, 
+                outputPath,
+                message: '合并完成！'
+            });
+        } else {
+            logger.error('[合并]', `失败 | 耗时 ${elapsed}秒 | ${stderr.substring(0, 300)}`);
+            res.json({ 
+                success: false, 
+                error: '合并失败',
+                details: stderr.substring(stderr.length - 500)
+            });
+        }
+    });
+    
+    ffmpeg.on('error', (err) => {
+        // 删除临时文件
+        try {
+            fs.unlinkSync(tempListPath);
+        } catch (e) {}
+        
+        logger.error('[合并]', `错误 | ${err.message}`);
+        res.json({ 
+            success: false, 
+            error: `执行ffmpeg失败: ${err.message}`
+        });
+    });
+});
+
+/**
  * 打开输出文件夹
  */
 app.get('/api/open-output', (req, res) => {

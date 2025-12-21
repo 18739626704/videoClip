@@ -39,6 +39,11 @@ const state = {
         currentTime: 0,        // 当前推流时间
         rtspUrl: '',           // RTSP 地址
         statusPollInterval: null // 状态轮询定时器
+    },
+    
+    // 视频合并状态
+    merge: {
+        videos: []             // 待合并的视频列表 [{path, name, duration}]
     }
 };
 
@@ -88,7 +93,8 @@ async function closeVideo() {
     // 隐藏视频相关UI
     DOM.videoHeader.style.display = 'none';
     DOM.videoContainer.style.display = 'none';
-    DOM.timelinePanel.style.display = 'none';
+    DOM.clipPanel.style.display = 'none';
+    DOM.mergePanel.style.display = 'none';
     DOM.resultPanel.style.display = 'none';
     DOM.rtspPanel.style.display = 'none';
     
@@ -115,8 +121,13 @@ const DOM = {
     videoPlayer: document.getElementById('videoPlayer'),
     videoError: document.getElementById('videoError'),
     
+    // 剪辑面板（可折叠）
+    clipPanel: document.getElementById('clipPanel'),
+    clipPanelHeader: document.getElementById('clipPanelHeader'),
+    clipPanelContent: document.getElementById('clipPanelContent'),
+    btnCollapseClip: document.getElementById('btnCollapseClip'),
+    
     // 时间轴
-    timelinePanel: document.getElementById('timelinePanel'),
     timeline: document.getElementById('timeline'),
     timelineProgress: document.getElementById('timelineProgress'),
     timelineSelection: document.getElementById('timelineSelection'),
@@ -189,8 +200,23 @@ const DOM = {
     videoName: document.getElementById('videoName'),
     btnCloseVideo: document.getElementById('btnCloseVideo'),
     
+    // 视频合并面板
+    mergePanel: document.getElementById('mergePanel'),
+    mergePanelHeader: document.getElementById('mergePanelHeader'),
+    mergePanelContent: document.getElementById('mergePanelContent'),
+    btnCollapseMerge: document.getElementById('btnCollapseMerge'),
+    mergeList: document.getElementById('mergeList'),
+    btnAddToMerge: document.getElementById('btnAddToMerge'),
+    btnClearMerge: document.getElementById('btnClearMerge'),
+    mergeOutputName: document.getElementById('mergeOutputName'),
+    btnMerge: document.getElementById('btnMerge'),
+    mergeCount: document.getElementById('mergeCount'),
+    
     // RTSP 推流
     rtspPanel: document.getElementById('rtspPanel'),
+    rtspPanelHeader: document.getElementById('rtspPanelHeader'),
+    rtspPanelContent: document.getElementById('rtspPanelContent'),
+    btnCollapseRtsp: document.getElementById('btnCollapseRtsp'),
     rtspStatusDot: document.getElementById('rtspStatusDot'),
     rtspStatusText: document.getElementById('rtspStatusText'),
     rtspUrl: document.getElementById('rtspUrl'),
@@ -438,7 +464,8 @@ async function setActiveVideo(path, name) {
     DOM.videoContainer.style.display = 'flex';
     DOM.videoError.style.display = 'none';
     DOM.videoPlayer.style.display = 'none';
-    DOM.timelinePanel.style.display = 'none';
+    DOM.clipPanel.style.display = 'none';
+    DOM.mergePanel.style.display = 'none';
     DOM.resultPanel.style.display = 'none';
     
     // 显示 RTSP 面板（如果已配置 MediaMTX）
@@ -448,6 +475,9 @@ async function setActiveVideo(path, name) {
         // 更新 RTSP UI 状态（确保按钮正确启用）
         updateRtspUI();
     }
+    
+    // 显示合并面板
+    DOM.mergePanel.style.display = 'block';
     
     // 显示加载提示
     showResult('🔄 正在检测视频格式...', 'info');
@@ -540,7 +570,7 @@ function loadVideoPlayer(videoPath) {
         
         DOM.videoPlayer.style.display = 'block';
         DOM.videoError.style.display = 'none';
-        DOM.timelinePanel.style.display = 'block';
+        DOM.clipPanel.style.display = 'block';
         DOM.resultPanel.style.display = 'none';
         
         updateTimeline();
@@ -568,7 +598,7 @@ async function loadVideoInfoOnly(videoPath) {
         state.duration = result.duration;
         state.startTime = 0;
         state.endTime = state.duration;
-        DOM.timelinePanel.style.display = 'block';
+        DOM.clipPanel.style.display = 'block';
         updateTimeline();
         
         DOM.videoError.querySelector('p').textContent = '视频格式不支持预览';
@@ -844,6 +874,202 @@ function showResult(message, type = 'info') {
     content.className = `result-content ${type}`;
     content.innerHTML = message;
     DOM.resultPanel.appendChild(content);
+}
+
+// ==================== 可折叠面板 ====================
+
+/**
+ * 切换面板折叠状态
+ */
+function toggleCollapse(panel) {
+    if (!panel) return;
+    panel.classList.toggle('collapsed');
+}
+
+// ==================== 视频合并 ====================
+
+/**
+ * 添加当前视频到合并列表
+ */
+async function addCurrentVideoToMerge() {
+    if (!state.activeVideo) {
+        showResult('⚠️ 请先选择一个视频', 'error');
+        return;
+    }
+    
+    // 检查是否已添加
+    const exists = state.merge.videos.some(v => v.path === state.activeVideo.path);
+    if (exists) {
+        showResult('⚠️ 该视频已在合并列表中', 'error');
+        return;
+    }
+    
+    // 获取视频时长
+    let duration = state.duration;
+    if (!duration) {
+        const result = await api(`/api/video-info?path=${encodeURIComponent(state.activeVideo.path)}`);
+        if (result.success) {
+            duration = result.duration || 0;
+        }
+    }
+    
+    state.merge.videos.push({
+        path: state.activeVideo.path,
+        name: state.activeVideo.name,
+        duration: duration
+    });
+    
+    updateMergeList();
+    showResult(`✅ 已添加到合并列表 (${state.merge.videos.length} 个视频)`, 'success');
+}
+
+/**
+ * 从合并列表移除视频
+ */
+function removeFromMerge(index) {
+    state.merge.videos.splice(index, 1);
+    updateMergeList();
+}
+
+/**
+ * 清空合并列表
+ */
+function clearMergeList() {
+    state.merge.videos = [];
+    updateMergeList();
+}
+
+/**
+ * 更新合并列表显示
+ */
+function updateMergeList() {
+    if (!DOM.mergeList) return;
+    
+    if (state.merge.videos.length === 0) {
+        DOM.mergeList.innerHTML = '<div class="merge-empty">尚未添加视频，请从左侧选择</div>';
+    } else {
+        DOM.mergeList.innerHTML = state.merge.videos.map((video, index) => `
+            <div class="merge-item" draggable="true" data-index="${index}">
+                <span class="merge-item-order">${index + 1}</span>
+                <span class="merge-item-name" title="${video.path}">${video.name}</span>
+                <span class="merge-item-duration">${formatTime(video.duration)}</span>
+                <button class="merge-item-remove" data-index="${index}" title="移除">✕</button>
+            </div>
+        `).join('');
+        
+        // 绑定移除按钮事件
+        DOM.mergeList.querySelectorAll('.merge-item-remove').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const index = parseInt(e.target.dataset.index);
+                removeFromMerge(index);
+            });
+        });
+        
+        // 初始化拖拽排序
+        initMergeDragSort();
+    }
+    
+    // 更新合并按钮状态
+    updateMergeButton();
+}
+
+/**
+ * 初始化合并列表拖拽排序
+ */
+function initMergeDragSort() {
+    const items = DOM.mergeList.querySelectorAll('.merge-item');
+    let draggedItem = null;
+    
+    items.forEach(item => {
+        item.addEventListener('dragstart', (e) => {
+            draggedItem = item;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            draggedItem = null;
+        });
+        
+        item.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+        });
+        
+        item.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (!draggedItem || draggedItem === item) return;
+            
+            const fromIndex = parseInt(draggedItem.dataset.index);
+            const toIndex = parseInt(item.dataset.index);
+            
+            // 交换位置
+            const temp = state.merge.videos[fromIndex];
+            state.merge.videos.splice(fromIndex, 1);
+            state.merge.videos.splice(toIndex, 0, temp);
+            
+            updateMergeList();
+        });
+    });
+}
+
+/**
+ * 更新合并按钮状态
+ */
+function updateMergeButton() {
+    if (!DOM.btnMerge || !DOM.mergeCount) return;
+    
+    const count = state.merge.videos.length;
+    DOM.mergeCount.textContent = `(${count}/2)`;
+    DOM.btnMerge.disabled = count < 2;
+    
+    if (count >= 2) {
+        DOM.mergeCount.textContent = `(${count}个视频)`;
+    }
+}
+
+/**
+ * 执行视频合并
+ */
+async function doMerge() {
+    if (state.merge.videos.length < 2) {
+        showResult('⚠️ 至少需要选择2个视频进行合并', 'error');
+        return;
+    }
+    
+    // 禁用按钮
+    DOM.btnMerge.disabled = true;
+    DOM.btnMerge.innerHTML = '🔄 合并中...';
+    
+    showResult('🔄 正在合并视频...', 'info');
+    
+    try {
+        const result = await api('/api/merge', {
+            method: 'POST',
+            body: {
+                videos: state.merge.videos.map(v => v.path),
+                outputName: DOM.mergeOutputName?.value || ''
+            }
+        });
+        
+        if (result.success) {
+            showResult(`✅ 合并完成！输出文件：${result.outputPath}`, 'success');
+            clearMergeList();
+            if (DOM.mergeOutputName) {
+                DOM.mergeOutputName.value = '';
+            }
+        } else {
+            showResult(`❌ 合并失败：${result.error}`, 'error');
+        }
+    } catch (error) {
+        showResult(`❌ 合并失败：${error.message}`, 'error');
+    }
+    
+    // 恢复按钮
+    DOM.btnMerge.innerHTML = '🔗 开始合并 <span id="mergeCount">(0/2)</span>';
+    updateMergeButton();
 }
 
 // ==================== RTSP 推流 ====================
@@ -1776,6 +2002,45 @@ function bindEvents() {
     }
     if (DOM.settingStreamName) {
         DOM.settingStreamName.addEventListener('input', updateRtspUrlPreview);
+    }
+    
+    // 可折叠面板
+    if (DOM.clipPanelHeader) {
+        DOM.clipPanelHeader.addEventListener('click', (e) => {
+            if (e.target.closest('.btn-collapse') || e.target === DOM.clipPanelHeader || e.target.tagName === 'H3') {
+                toggleCollapse(DOM.clipPanel);
+            }
+        });
+    }
+    
+    if (DOM.mergePanelHeader) {
+        DOM.mergePanelHeader.addEventListener('click', (e) => {
+            if (e.target.closest('.btn-collapse') || e.target === DOM.mergePanelHeader || e.target.tagName === 'H3') {
+                toggleCollapse(DOM.mergePanel);
+            }
+        });
+    }
+    
+    if (DOM.rtspPanelHeader) {
+        DOM.rtspPanelHeader.addEventListener('click', (e) => {
+            // 不在状态指示器和按钮上点击时才折叠
+            if (e.target.closest('.btn-collapse') || e.target === DOM.rtspPanelHeader || e.target.tagName === 'H3') {
+                toggleCollapse(DOM.rtspPanel);
+            }
+        });
+    }
+    
+    // 视频合并功能
+    if (DOM.btnAddToMerge) {
+        DOM.btnAddToMerge.addEventListener('click', addCurrentVideoToMerge);
+    }
+    
+    if (DOM.btnClearMerge) {
+        DOM.btnClearMerge.addEventListener('click', clearMergeList);
+    }
+    
+    if (DOM.btnMerge) {
+        DOM.btnMerge.addEventListener('click', doMerge);
     }
 }
 

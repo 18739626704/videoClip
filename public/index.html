@@ -71,185 +71,234 @@
                     </div>
                 </div>
 
-                <!-- RTSP 推流面板 -->
-                <div class="rtsp-panel" id="rtspPanel" style="display: none;">
-                    <div class="rtsp-header">
+                <!-- 剪辑面板（可折叠） -->
+                <div class="collapsible-panel" id="clipPanel" style="display: none;">
+                    <div class="collapsible-header" id="clipPanelHeader">
+                        <h3>✂️ 视频剪辑</h3>
+                        <button class="btn-collapse" id="btnCollapseClip" title="折叠/展开">
+                            <span class="collapse-icon">▼</span>
+                        </button>
+                    </div>
+                    <div class="collapsible-content" id="clipPanelContent">
+                        <!-- 时间轴 -->
+                        <div class="timeline-container">
+                            <div class="timeline" id="timeline">
+                                <div class="timeline-track"></div>
+                                <div class="timeline-progress" id="timelineProgress"></div>
+                                <div class="timeline-selection" id="timelineSelection"></div>
+                                <div class="timeline-handle start" id="handleStart" title="拖动设置开始时间"></div>
+                                <div class="timeline-handle end" id="handleEnd" title="拖动设置结束时间"></div>
+                                <div class="timeline-playhead" id="playhead" title="当前播放位置"></div>
+                            </div>
+                            <div class="timeline-labels">
+                                <span id="labelStart">00:00:00</span>
+                                <span id="labelCurrent">当前: 00:00:00</span>
+                                <span id="labelEnd">00:00:00</span>
+                            </div>
+                        </div>
+
+                        <!-- 时间输入 -->
+                        <div class="time-inputs">
+                            <div class="time-input-group">
+                                <label>开始时间</label>
+                                <div class="time-input-wrapper">
+                                    <input type="text" id="inputStartTime" value="00:00:00" pattern="\d{2}:\d{2}:\d{2}" />
+                                    <button class="btn-small btn-use-current" id="btnUseCurrentStart" title="使用当前播放位置">📍</button>
+                                </div>
+                            </div>
+                            <div class="time-input-group">
+                                <label>结束时间</label>
+                                <div class="time-input-wrapper">
+                                    <input type="text" id="inputEndTime" value="00:00:00" pattern="\d{2}:\d{2}:\d{2}" />
+                                    <button class="btn-small btn-use-current" id="btnUseCurrentEnd" title="使用当前播放位置">📍</button>
+                                </div>
+                            </div>
+                            <div class="time-input-group">
+                                <label>片段时长</label>
+                                <span class="clip-duration" id="clipDuration">00:00:00</span>
+                            </div>
+                        </div>
+
+                        <!-- 快捷操作 -->
+                        <div class="quick-actions">
+                            <button class="btn-small" id="btnPreviewStart" title="跳转到开始位置">▶ 预览开始点</button>
+                            <button class="btn-small" id="btnPreviewEnd" title="跳转到结束位置">▶ 预览结束点</button>
+                            <button class="btn-small" id="btnPreviewClip" title="预览剪辑片段">▶ 预览片段</button>
+                        </div>
+
+                        <!-- 输出设置 -->
+                        <div class="output-settings">
+                            <div class="output-name">
+                                <label>输出文件名（可选）</label>
+                                <input type="text" id="outputName" placeholder="留空则自动生成" />
+                            </div>
+                            <div class="output-options">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="reEncode" />
+                                    <span>重新编码（更兼容但较慢）</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- 操作按钮 -->
+                        <div class="action-buttons">
+                            <button id="btnClip" class="btn-primary btn-large">
+                                ✂️ 开始剪辑
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 视频合并面板（可折叠） -->
+                <div class="collapsible-panel" id="mergePanel" style="display: none;">
+                    <div class="collapsible-header" id="mergePanelHeader">
+                        <h3>🔗 视频合并</h3>
+                        <button class="btn-collapse" id="btnCollapseMerge" title="折叠/展开">
+                            <span class="collapse-icon">▼</span>
+                        </button>
+                    </div>
+                    <div class="collapsible-content" id="mergePanelContent">
+                        <div class="merge-hint">
+                            <small>💡 从左侧文件列表点击视频添加到合并列表，拖拽调整顺序</small>
+                        </div>
+                        
+                        <div class="merge-list" id="mergeList">
+                            <div class="merge-empty">尚未添加视频，请从左侧选择</div>
+                        </div>
+                        
+                        <div class="merge-actions">
+                            <button class="btn-small" id="btnAddToMerge" title="添加当前视频到合并列表">
+                                ➕ 添加当前视频
+                            </button>
+                            <button class="btn-small btn-danger" id="btnClearMerge" title="清空列表">
+                                🗑️ 清空
+                            </button>
+                        </div>
+                        
+                        <div class="merge-output">
+                            <label>输出文件名（可选）</label>
+                            <input type="text" id="mergeOutputName" placeholder="留空则自动生成" />
+                        </div>
+                        
+                        <div class="action-buttons">
+                            <button id="btnMerge" class="btn-primary btn-large" disabled>
+                                🔗 开始合并 <span id="mergeCount">(0/2)</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RTSP 推流面板（可折叠） -->
+                <div class="collapsible-panel rtsp-panel" id="rtspPanel" style="display: none;">
+                    <div class="collapsible-header" id="rtspPanelHeader">
                         <h3>📡 RTSP 推流</h3>
                         <div class="rtsp-status">
                             <span class="status-dot" id="rtspStatusDot"></span>
                             <span id="rtspStatusText">未连接</span>
                         </div>
-                    </div>
-                    
-                    <div class="rtsp-url-section">
-                        <div class="rtsp-url-container">
-                            <input type="text" id="rtspUrl" readonly placeholder="推流地址将在此显示" />
-                            <button class="btn-copy" id="btnCopyRtspUrl" title="复制地址">📋</button>
-                        </div>
-                    </div>
-                    
-                    <!-- 推流选项 -->
-                    <div class="rtsp-options">
-                        <div class="rtsp-option-row">
-                            <label class="rtsp-option-label">倍速</label>
-                            <select id="rtspSpeed" class="rtsp-select">
-                                <option value="0.5">0.5x</option>
-                                <option value="0.75">0.75x</option>
-                                <option value="1" selected>1x (原速)</option>
-                                <option value="1.25">1.25x</option>
-                                <option value="1.5">1.5x</option>
-                                <option value="2">2x</option>
-                                <option value="4">4x</option>
-                            </select>
-                            <span class="rtsp-option-hint" id="speedHint"></span>
-                        </div>
-                        <div class="rtsp-option-row">
-                            <label class="rtsp-option-label">推流区间</label>
-                            <label class="rtsp-checkbox">
-                                <input type="checkbox" id="rtspUseRange">
-                                <span>使用剪辑范围</span>
-                            </label>
-                            <span class="rtsp-range-display" id="rtspRangeDisplay"></span>
-                        </div>
-                        <div class="rtsp-option-row">
-                            <label class="rtsp-option-label">循环推流</label>
-                            <label class="rtsp-checkbox">
-                                <input type="checkbox" id="rtspLoop">
-                                <span>视频结束后自动重播</span>
-                            </label>
-                            <span class="rtsp-loop-count" id="rtspLoopCount"></span>
-                        </div>
-                    </div>
-                    
-                    <div class="rtsp-progress-section">
-                        <div class="rtsp-time-display">
-                            <span id="rtspCurrentTime">00:00:00</span>
-                            <span class="rtsp-time-separator">/</span>
-                            <span id="rtspTotalTime">00:00:00</span>
-                        </div>
-                        <div class="sync-status" id="syncStatus">
-                            <span class="sync-icon">📡</span>
-                            <span class="sync-text">推流独立运行</span>
-                        </div>
-                    </div>
-                    
-                    <!-- 推流状态监控 -->
-                    <div class="rtsp-stats" id="rtspStats" style="display: none;">
-                        <div class="rtsp-stat-item">
-                            <span class="stat-label">帧率</span>
-                            <span class="stat-value" id="statFps">0 fps</span>
-                        </div>
-                        <div class="rtsp-stat-item">
-                            <span class="stat-label">码率</span>
-                            <span class="stat-value" id="statBitrate">0 kbps</span>
-                        </div>
-                        <div class="rtsp-stat-item">
-                            <span class="stat-label">已推送</span>
-                            <span class="stat-value" id="statFrames">0 帧</span>
-                        </div>
-                        <div class="rtsp-stat-item">
-                            <span class="stat-label">丢帧</span>
-                            <span class="stat-value" id="statDropped">0</span>
-                        </div>
-                        <div class="rtsp-stat-item">
-                            <span class="stat-label">设定倍速</span>
-                            <span class="stat-value" id="statSpeed">1x</span>
-                        </div>
-                        <div class="rtsp-stat-item">
-                            <span class="stat-label">数据量</span>
-                            <span class="stat-value" id="statSize">0 MB</span>
-                        </div>
-                    </div>
-                    
-                    <div class="rtsp-controls">
-                        <button class="btn-rtsp" id="btnStartStream" title="从当前预览时间开始推流">
-                            <span class="btn-icon">▶</span>
-                            <span class="btn-text">开始推流</span>
-                        </button>
-                        <button class="btn-rtsp" id="btnSyncStream" title="同步到当前预览时间（会重启推流）" disabled>
-                            <span class="btn-icon">🔄</span>
-                            <span class="btn-text">同步时间</span>
-                        </button>
-                        <button class="btn-rtsp btn-stop" id="btnStopStream" title="停止推流" disabled>
-                            <span class="btn-icon">⏹</span>
-                            <span class="btn-text">停止</span>
+                        <button class="btn-collapse" id="btnCollapseRtsp" title="折叠/展开">
+                            <span class="collapse-icon">▼</span>
                         </button>
                     </div>
-                    
-                    <div class="rtsp-hint">
-                        <small>💡 推流与预览独立运行。非1x倍速需要重新编码，CPU占用较高。</small>
-                    </div>
-                </div>
-
-                <!-- 时间轴控制 -->
-                <div class="timeline-panel" id="timelinePanel" style="display: none;">
-                    <h3>⏱️ 剪辑范围</h3>
-                    
-                    <!-- 时间轴 -->
-                    <div class="timeline-container">
-                        <div class="timeline" id="timeline">
-                            <div class="timeline-track"></div>
-                            <div class="timeline-progress" id="timelineProgress"></div>
-                            <div class="timeline-selection" id="timelineSelection"></div>
-                            <div class="timeline-handle start" id="handleStart" title="拖动设置开始时间"></div>
-                            <div class="timeline-handle end" id="handleEnd" title="拖动设置结束时间"></div>
-                            <div class="timeline-playhead" id="playhead" title="当前播放位置"></div>
-                        </div>
-                        <div class="timeline-labels">
-                            <span id="labelStart">00:00:00</span>
-                            <span id="labelCurrent">当前: 00:00:00</span>
-                            <span id="labelEnd">00:00:00</span>
-                        </div>
-                    </div>
-
-                    <!-- 时间输入 -->
-                    <div class="time-inputs">
-                        <div class="time-input-group">
-                            <label>开始时间</label>
-                            <div class="time-input-wrapper">
-                                <input type="text" id="inputStartTime" value="00:00:00" pattern="\d{2}:\d{2}:\d{2}" />
-                                <button class="btn-small btn-use-current" id="btnUseCurrentStart" title="使用当前播放位置">📍</button>
+                    <div class="collapsible-content" id="rtspPanelContent">
+                        <div class="rtsp-url-section">
+                            <div class="rtsp-url-container">
+                                <input type="text" id="rtspUrl" readonly placeholder="推流地址将在此显示" />
+                                <button class="btn-copy" id="btnCopyRtspUrl" title="复制地址">📋</button>
                             </div>
                         </div>
-                        <div class="time-input-group">
-                            <label>结束时间</label>
-                            <div class="time-input-wrapper">
-                                <input type="text" id="inputEndTime" value="00:00:00" pattern="\d{2}:\d{2}:\d{2}" />
-                                <button class="btn-small btn-use-current" id="btnUseCurrentEnd" title="使用当前播放位置">📍</button>
+                        
+                        <!-- 推流选项 -->
+                        <div class="rtsp-options">
+                            <div class="rtsp-option-row">
+                                <label class="rtsp-option-label">倍速</label>
+                                <select id="rtspSpeed" class="rtsp-select">
+                                    <option value="0.5">0.5x</option>
+                                    <option value="0.75">0.75x</option>
+                                    <option value="1" selected>1x (原速)</option>
+                                    <option value="1.25">1.25x</option>
+                                    <option value="1.5">1.5x</option>
+                                    <option value="2">2x</option>
+                                    <option value="4">4x</option>
+                                </select>
+                                <span class="rtsp-option-hint" id="speedHint"></span>
+                            </div>
+                            <div class="rtsp-option-row">
+                                <label class="rtsp-option-label">推流区间</label>
+                                <label class="rtsp-checkbox">
+                                    <input type="checkbox" id="rtspUseRange">
+                                    <span>使用剪辑范围</span>
+                                </label>
+                                <span class="rtsp-range-display" id="rtspRangeDisplay"></span>
+                            </div>
+                            <div class="rtsp-option-row">
+                                <label class="rtsp-option-label">循环推流</label>
+                                <label class="rtsp-checkbox">
+                                    <input type="checkbox" id="rtspLoop">
+                                    <span>视频结束后自动重播</span>
+                                </label>
+                                <span class="rtsp-loop-count" id="rtspLoopCount"></span>
                             </div>
                         </div>
-                        <div class="time-input-group">
-                            <label>片段时长</label>
-                            <span class="clip-duration" id="clipDuration">00:00:00</span>
+                        
+                        <div class="rtsp-progress-section">
+                            <div class="rtsp-time-display">
+                                <span id="rtspCurrentTime">00:00:00</span>
+                                <span class="rtsp-time-separator">/</span>
+                                <span id="rtspTotalTime">00:00:00</span>
+                            </div>
+                            <div class="sync-status" id="syncStatus">
+                                <span class="sync-icon">📡</span>
+                                <span class="sync-text">推流独立运行</span>
+                            </div>
                         </div>
-                    </div>
-
-                    <!-- 快捷操作 -->
-                    <div class="quick-actions">
-                        <button class="btn-small" id="btnPreviewStart" title="跳转到开始位置">▶ 预览开始点</button>
-                        <button class="btn-small" id="btnPreviewEnd" title="跳转到结束位置">▶ 预览结束点</button>
-                        <button class="btn-small" id="btnPreviewClip" title="预览剪辑片段">▶ 预览片段</button>
-                    </div>
-
-                    <!-- 输出设置 -->
-                    <div class="output-settings">
-                        <div class="output-name">
-                            <label>输出文件名（可选）</label>
-                            <input type="text" id="outputName" placeholder="留空则自动生成" />
+                        
+                        <!-- 推流状态监控 -->
+                        <div class="rtsp-stats" id="rtspStats" style="display: none;">
+                            <div class="rtsp-stat-item">
+                                <span class="stat-label">帧率</span>
+                                <span class="stat-value" id="statFps">0 fps</span>
+                            </div>
+                            <div class="rtsp-stat-item">
+                                <span class="stat-label">码率</span>
+                                <span class="stat-value" id="statBitrate">0 kbps</span>
+                            </div>
+                            <div class="rtsp-stat-item">
+                                <span class="stat-label">已推送</span>
+                                <span class="stat-value" id="statFrames">0 帧</span>
+                            </div>
+                            <div class="rtsp-stat-item">
+                                <span class="stat-label">丢帧</span>
+                                <span class="stat-value" id="statDropped">0</span>
+                            </div>
+                            <div class="rtsp-stat-item">
+                                <span class="stat-label">设定倍速</span>
+                                <span class="stat-value" id="statSpeed">1x</span>
+                            </div>
+                            <div class="rtsp-stat-item">
+                                <span class="stat-label">数据量</span>
+                                <span class="stat-value" id="statSize">0 MB</span>
+                            </div>
                         </div>
-                        <div class="output-options">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="reEncode" />
-                                <span>重新编码（更兼容但较慢）</span>
-                            </label>
+                        
+                        <div class="rtsp-controls">
+                            <button class="btn-rtsp" id="btnStartStream" title="从当前预览时间开始推流">
+                                <span class="btn-icon">▶</span>
+                                <span class="btn-text">开始推流</span>
+                            </button>
+                            <button class="btn-rtsp" id="btnSyncStream" title="同步到当前预览时间（会重启推流）" disabled>
+                                <span class="btn-icon">🔄</span>
+                                <span class="btn-text">同步时间</span>
+                            </button>
+                            <button class="btn-rtsp btn-stop" id="btnStopStream" title="停止推流" disabled>
+                                <span class="btn-icon">⏹</span>
+                                <span class="btn-text">停止</span>
+                            </button>
                         </div>
-                    </div>
-
-                    <!-- 操作按钮 -->
-                    <div class="action-buttons">
-                        <button id="btnClip" class="btn-primary btn-large">
-                            ✂️ 开始剪辑
-                        </button>
+                        
+                        <div class="rtsp-hint">
+                            <small>💡 推流与预览独立运行。非1x倍速需要重新编码，CPU占用较高。</small>
+                        </div>
                     </div>
                 </div>
 
